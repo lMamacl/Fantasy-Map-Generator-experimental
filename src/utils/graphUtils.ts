@@ -249,6 +249,15 @@ export const findClosestCell = (
   return found ? found[2] : undefined;
 };
 
+export const findCell = (x: number, y: number, radius = Infinity): number | undefined =>
+  findClosestCell(
+    x,
+    y,
+    radius,
+    (typeof window !== "undefined" && (window as any).pack) ||
+      (typeof globalThis !== "undefined" && (globalThis as any).pack)
+  );
+
 /**
  * Searches a quadtree for all points within a given radius
  * Based on https://bl.ocks.org/lwthatcher/b41479725e0ff2277c7ac90df2de2b5e

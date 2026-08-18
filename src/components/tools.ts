@@ -26,6 +26,12 @@ ensureEl("toolsContent").addEventListener("click", event => {
   if (parentId === "regenerateFeature") confirmRegeneration(event, buttonId);
   else if (buttonId === "editHeightmapButton") void Controllers.HeightmapEditor.open();
   else if (buttonId === "editBiomesButton") void Controllers.BiomesEditor.open();
+  else if (
+    buttonId === "editAeroHydroButton" ||
+    buttonId === "editOceanCurrentsButton" ||
+    buttonId === "editWindsButton"
+  )
+    void Controllers.AeroHydroEditor.open();
   else if (buttonId === "editStatesButton") void Controllers.StatesEditor.open();
   else if (buttonId === "editProvincesButton") void Controllers.ProvincesEditor.open();
   else if (buttonId === "editDiplomacyButton") void Controllers.DiplomacyEditor.open();

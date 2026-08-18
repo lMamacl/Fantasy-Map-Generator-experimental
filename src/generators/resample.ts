@@ -443,6 +443,7 @@ class Resampler {
 
     OceanLayers();
     calculateMapCoordinates();
+    generateAeroHydro();
     calculateTemperatures();
 
     reGraph();

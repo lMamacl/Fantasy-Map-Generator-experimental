@@ -581,6 +581,22 @@
               <u>T</u>emperature
             </li>
             <li
+              id="toggleOceanCurrents"
+              data-tip="Ocean Currents map: click to toggle flow vector lines and thermal anomalies. Ctrl + click to edit layer style"
+              class="buttonoff"
+              onclick="toggleOceanCurrents(event)"
+            >
+              Ocean Currents
+            </li>
+            <li
+              id="toggleWind"
+              data-tip="Wind flow map: click to toggle atmospheric streamlines and moisture fluxes. Ctrl + click to edit layer style"
+              class="buttonoff"
+              onclick="toggleWind(event)"
+            >
+              Winds
+            </li>
+            <li
               id="toggleIce"
               data-tip="Icebergs and glaciers: click to toggle, drag to raise or lower the layer. Ctrl + click to edit layer style"
               data-shortcut="J"
@@ -2033,6 +2049,9 @@
             </button>
             <button id="editMeasurersButton" data-tip="Click to open Measurers Editor" data-shortcut="Shift + =">
               Measurers
+            </button>
+            <button id="editAeroHydroButton" data-tip="Click to open Aero-Hydro 2.0 Editor (Atmospheric Winds, Ocean Currents & Climate)" onclick="window.Controllers.AeroHydroEditor.open()" data-shortcut="Shift + W">
+              Winds & Currents
             </button>
             <button id="overviewLabelsButton" data-tip="Click to open Labels Overview" data-shortcut="Shift + L">
               Labels

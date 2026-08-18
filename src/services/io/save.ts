@@ -5,7 +5,7 @@ import { tip } from "@/components/tooltips";
 import { Services } from "@/services";
 import { getUsedFonts } from "@/services/fonts";
 import { VERSION } from "@/services/versioning";
-import { ensureEl, getFileName, link, parseError, rn } from "@/utils";
+import { downloadFile, ensureEl, getFileName, link, parseError, rn } from "@/utils";
 
 type SaveMethod = "storage" | "machine" | "dropbox";
 
@@ -120,6 +120,7 @@ function prepareMapData(): string {
   const deals = JSON.stringify(pack.deals || []);
   const labels = JSON.stringify(pack.addedLabels || []);
   const styleData = JSON.stringify(style);
+  const flowFeatures = JSON.stringify(pack.flowFeatures || []);
 
   // store custom good icons
   const goodIconsEl = ensureEl("good-icons");
@@ -190,7 +191,8 @@ function prepareMapData(): string {
     customGoodIcons,
     measurers,
     labels,
-    styleData
+    styleData,
+    flowFeatures
   ].join("\r\n");
   return mapData;
 }
@@ -204,16 +206,8 @@ async function saveToStorage(mapData: string, showTip = false): Promise<void> {
 
 // download map file
 function saveToMachine(mapData: string, filename: string): void {
-  const blob = new Blob([mapData], { type: "text/plain" });
-  const URL = window.URL.createObjectURL(blob);
-
-  const link = document.createElement("a");
-  link.download = filename;
-  link.href = URL;
-  link.click();
-
+  downloadFile(mapData, filename);
   tip('Map is saved to the "Downloads" folder (CTRL + J to open)', true, "success", 8000);
-  setTimeout(() => window.URL.revokeObjectURL(URL), 5000);
 }
 
 async function saveToDropbox(mapData: string, filename: string): Promise<void> {

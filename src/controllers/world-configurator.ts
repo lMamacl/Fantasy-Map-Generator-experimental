@@ -363,6 +363,7 @@ function updateInputValues(): void {
 function updateWorld(): void {
   updateGlobeTemperature();
   updateGlobePosition();
+  generateAeroHydro();
   calculateTemperatures();
   generatePrecipitation();
   const heights = new Uint8Array(pack.cells.h);

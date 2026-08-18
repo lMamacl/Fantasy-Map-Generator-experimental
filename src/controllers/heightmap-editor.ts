@@ -504,6 +504,7 @@ function regenerateErasedData(): void {
     openNearSeaLakes();
   }
   OceanLayers();
+  generateAeroHydro();
   calculateTemperatures();
   generatePrecipitation();
   reGraph();
@@ -655,6 +656,7 @@ function restoreRiskedData(): void {
   Features.markupGrid();
   if (erosionAllowed) addLakesInDeepDepressions();
   OceanLayers();
+  generateAeroHydro();
   calculateTemperatures();
   generatePrecipitation();
   reGraph();

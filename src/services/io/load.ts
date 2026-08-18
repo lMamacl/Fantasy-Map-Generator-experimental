@@ -483,6 +483,10 @@ async function parseLoadedData(data: string[], mapVersion: string | null): Promi
     }
 
     if (data[48]) style = JSON.parse(data[48]);
+    pack.flowFeatures = data[49] ? JSON.parse(data[49]) : [];
+    if (typeof AeroHydro !== "undefined" && AeroHydro) {
+      AeroHydro.flowFeatures = pack.flowFeatures || [];
+    }
 
     {
       const { resolveVersionConflicts } = await import("./auto-update");
