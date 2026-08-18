@@ -1,6 +1,7 @@
 // Save the whole .map project to storage, machine or cloud
 
 import { closeDialogs } from "@/components/dialog/dialog-helpers";
+import { Layers } from "@/components/layers";
 import { tip } from "@/components/tooltips";
 import { Services } from "@/services";
 import { getUsedFonts } from "@/services/fonts";
@@ -83,6 +84,7 @@ function prepareMapData(): string {
   const notesData = JSON.stringify(notes);
   const measurers = JSON.stringify(pack.measurers ?? []);
   const fonts = JSON.stringify(getUsedFonts(ensureEl("map") as Element as SVGSVGElement));
+  const layers = JSON.stringify(Layers.state);
 
   // save svg
   const cloneEl = ensureEl("map").cloneNode(true) as SVGSVGElement;
@@ -91,7 +93,10 @@ function prepareMapData(): string {
   cloneEl.setAttribute("width", String(graphWidth));
   cloneEl.setAttribute("height", String(graphHeight));
   cloneEl.querySelector("#viewbox")?.removeAttribute("transform");
-  cloneEl.querySelector("#labels")?.setAttribute("data-layer-active", String(layerIsOn("toggleLabels")));
+
+  // relief icons are stored in pack.relief, the layer holds only the currently visible ones
+  const cloneTerrain = cloneEl.querySelector("#terrain");
+  if (cloneTerrain) cloneTerrain.innerHTML = "";
 
   const cloneRuler = cloneEl.querySelector("#ruler");
   if (cloneRuler) cloneRuler.innerHTML = ""; // always remove rulers
@@ -110,6 +115,7 @@ function prepareMapData(): string {
   const religions = JSON.stringify(pack.religions);
   const provinces = JSON.stringify(pack.provinces);
   const rivers = JSON.stringify(pack.rivers);
+  const relief = JSON.stringify(pack.relief || []);
   const markers = JSON.stringify(pack.markers);
   const cellRoutes = JSON.stringify(pack.cells.routes);
   const routes = JSON.stringify(pack.routes);
@@ -192,6 +198,8 @@ function prepareMapData(): string {
     measurers,
     labels,
     styleData,
+    relief,
+    layers,
     flowFeatures
   ].join("\r\n");
   return mapData;

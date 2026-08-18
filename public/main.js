@@ -30,111 +30,13 @@ if (PRODUCTION && "serviceWorker" in navigator) {
   );
 }
 
-// append svg layers (in default order)
-let svg = d3.select("#map");
-let defs = svg.select("#deftemp");
-let viewbox = svg.select("#viewbox");
-let scaleBar = svg.select("#scaleBar");
-let legend = svg.append("g").attr("id", "legend");
-let ocean = viewbox.append("g").attr("id", "ocean");
-let oceanLayers = ocean.append("g").attr("id", "oceanLayers");
-let oceanPattern = ocean.append("g").attr("id", "oceanPattern");
-let landmass = viewbox.append("g").attr("id", "landmass");
-let texture = viewbox.append("g").attr("id", "texture");
-let terrs = viewbox.append("g").attr("id", "terrs");
-let lakes = viewbox.append("g").attr("id", "lakes");
-let biomes = viewbox.append("g").attr("id", "biomes");
-let cells = viewbox.append("g").attr("id", "cells");
-let gridOverlay = viewbox.append("g").attr("id", "gridOverlay");
-let coordinates = viewbox.append("g").attr("id", "coordinates");
-let compass = viewbox.append("g").attr("id", "compass").style("display", "none");
-let rivers = viewbox.append("g").attr("id", "rivers");
-let terrain = viewbox.append("g").attr("id", "terrain");
-let relig = viewbox.append("g").attr("id", "relig");
-let cults = viewbox.append("g").attr("id", "cults");
-let regions = viewbox.append("g").attr("id", "regions");
-let statesBody = regions.append("g").attr("id", "statesBody");
-let statesHalo = regions.append("g").attr("id", "statesHalo");
-let provs = viewbox.append("g").attr("id", "provs");
-let zones = viewbox.append("g").attr("id", "zones");
-let borders = viewbox.append("g").attr("id", "borders");
-let stateBorders = borders.append("g").attr("id", "stateBorders");
-let provinceBorders = borders.append("g").attr("id", "provinceBorders");
-let routes = viewbox.append("g").attr("id", "routes");
-let roads = routes.append("g").attr("id", "roads");
-let trails = routes.append("g").attr("id", "trails");
-let searoutes = routes.append("g").attr("id", "searoutes");
-let temperature = viewbox.append("g").attr("id", "temperature");
-let coastline = viewbox.append("g").attr("id", "coastline");
-let ice = viewbox.append("g").attr("id", "ice");
-let goods = viewbox.append("g").attr("id", "goods").style("display", "none");
-let markets = viewbox.append("g").attr("id", "markets");
-let tradeAnimation = viewbox.append("g").attr("id", "tradeAnimation");
-let prec = viewbox.append("g").attr("id", "prec").style("display", "none");
-let population = viewbox.append("g").attr("id", "population");
-let emblems = viewbox.append("g").attr("id", "emblems").style("display", "none");
-let icons = viewbox.append("g").attr("id", "icons");
-let labels = viewbox.append("g").attr("id", "labels").attr("font-size", "100px");
-let burgIcons = icons.append("g").attr("id", "burgIcons");
-let anchors = icons.append("g").attr("id", "anchors");
-let armies = viewbox.append("g").attr("id", "armies");
-let markers = viewbox.append("g").attr("id", "markers");
-let fogging = viewbox
-  .append("g")
-  .attr("id", "fogging-cont")
-  .attr("mask", "url(#fog)")
-  .append("g")
-  .attr("id", "fogging")
-  .style("display", "none");
-let ruler = viewbox.append("g").attr("id", "ruler").style("display", "none");
-var debug = viewbox.append("g").attr("id", "debug");
-
-lakes.append("g").attr("id", "freshwater");
-lakes.append("g").attr("id", "salt");
-lakes.append("g").attr("id", "sinkhole");
-lakes.append("g").attr("id", "frozen");
-lakes.append("g").attr("id", "lava");
-lakes.append("g").attr("id", "dry");
-
-coastline.append("g").attr("id", "sea_island");
-coastline.append("g").attr("id", "lake_island");
-
-terrs.append("g").attr("id", "oceanHeights");
-terrs.append("g").attr("id", "landHeights");
-
-// population groups
-population.append("g").attr("id", "rural");
-population.append("g").attr("id", "urban");
-
-// goods groups
-goods.append("g").attr("id", "goodsCells");
-goods.append("g").attr("id", "goodsIcons");
-goods.append("g").attr("id", "goodsBurgs");
-
-// emblem groups
-emblems.append("g").attr("id", "burgEmblems");
-emblems.append("g").attr("id", "provinceEmblems");
-emblems.append("g").attr("id", "stateEmblems");
-
-// compass
-compass.append("use").attr("xlink:href", "#defs-compass-rose");
-
-// fogging
-fogging.append("rect").attr("x", 0).attr("y", 0).attr("width", "100%").attr("height", "100%");
-fogging
-  .append("rect")
-  .attr("x", 0)
-  .attr("y", 0)
-  .attr("width", "100%")
-  .attr("height", "100%")
-  .attr("fill", "#e8f0f6")
-  .attr("filter", "url(#splotch)");
+Layers.init(); // create the svg layer groups
 
 // assign events separately as not a viewbox child
-scaleBar
+d3.select("#scaleBar")
   .on("mousemove", () => tip("Click to open Units Editor"))
   .on("click", () => window.Controllers.UnitsEditor.open());
-legend
+d3.select("#legend")
   .on("mousemove", () => tip("Drag to change the position. Click to hide the legend"))
   .on("click", () => clearLegend());
 
@@ -171,7 +73,7 @@ let options = {
 };
 
 // global style object; in v2.0 to be used for all map styles and render settings
-let style = { labels: { groups: {} }, burgIcons: {}, anchors: {} };
+let style = { labels: { groups: {} }, burgIcons: {}, anchors: {}, relief: { set: "simple", size: 1, density: 0.4 } };
 
 let color = d3.scaleSequential(d3.interpolateSpectral); // default color scheme
 const lineGen = d3.line().curve(d3.curveBasis); // d3 line generator with default curve interpolation
@@ -197,15 +99,14 @@ var graphHeight = +mapHeightInput.value;
 let svgWidth = graphWidth;
 let svgHeight = graphHeight;
 
-landmass.append("rect").attr("x", 0).attr("y", 0).attr("width", graphWidth).attr("height", graphHeight);
-oceanPattern
+d3.select("#oceanPattern")
   .append("rect")
   .attr("fill", "url(#oceanic)")
   .attr("x", 0)
   .attr("y", 0)
   .attr("width", graphWidth)
   .attr("height", graphHeight);
-oceanLayers
+d3.select("#oceanLayers")
   .append("rect")
   .attr("id", "oceanBase")
   .attr("x", 0)
@@ -302,7 +203,7 @@ async function generateMapOnLoad() {
   await applyStyleOnLoad(); // apply previously selected default or custom style
   await generate(); // generate map
   applyLayersPreset(); // apply saved layers preset and reder layers
-  drawLayers();
+  Layers.drawAll();
   fitMapToScreen();
   focusOn(); // based on searchParams focus on point, cell or burg from MFCG
   toggleAssistant();
@@ -446,7 +347,7 @@ function findBurgForMFCG(params) {
   }
   if (params.get("name") && params.get("name") != "null") b.name = params.get("name");
 
-  const label = labels.select("[data-label-type='burg'][data-id='" + burgId + "']");
+  const label = d3.select("#labels").select("[data-label-type='burg'][data-id='" + burgId + "']");
   if (label.size()) {
     label
       .text(b.name)
@@ -535,7 +436,6 @@ async function generate(options) {
     addLakesInDeepDepressions();
     openNearSeaLakes();
 
-    OceanLayers();
     defineMapSize();
     calculateMapCoordinates();
     generateAeroHydro();
@@ -582,8 +482,6 @@ async function generate(options) {
     Zones.generate();
 
     AddedLabels.initiate();
-
-    drawScaleBar(scaleBar, scale);
     Names.getMapName();
 
     WARN && console.warn(`TOTAL: ${rn((performance.now() - timeStart) / 1000, 2)}s`);
@@ -814,15 +712,216 @@ function calculateMapCoordinates() {
 // temperature model, trying to follow real-world data
 // based on http://www-das.uwyo.edu/~geerts/cwx/notes/chap16/Image64.gif
 function calculateTemperatures() {
-  TemperatureGenerator.generate();
-}
+  TIME && console.time("calculateTemperatures");
+  const cells = grid.cells;
+  cells.temp = new Int8Array(cells.i.length); // temperature array
 
+  const { temperatureEquator, temperatureNorthPole, temperatureSouthPole } = options;
+  const tropics = [16, -20]; // tropics zone
+  const tropicalGradient = 0.15;
+
+  const tempNorthTropic = temperatureEquator - tropics[0] * tropicalGradient;
+  const northernGradient = (tempNorthTropic - temperatureNorthPole) / (90 - tropics[0]);
+
+  const tempSouthTropic = temperatureEquator + tropics[1] * tropicalGradient;
+  const southernGradient = (tempSouthTropic - temperatureSouthPole) / (90 + tropics[1]);
+
+  const exponent = +heightExponentInput.value;
+
+  for (let rowCellId = 0; rowCellId < cells.i.length; rowCellId += grid.cellsX) {
+    const [, y] = grid.points[rowCellId];
+    const rowLatitude = mapCoordinates.latN - (y / graphHeight) * mapCoordinates.latT; // [90; -90]
+    const tempSeaLevel = calculateSeaLevelTemp(rowLatitude);
+    DEBUG.temperature && console.info(`${rn(rowLatitude)}° sea temperature: ${rn(tempSeaLevel)}°C`);
+
+    for (let cellId = rowCellId; cellId < rowCellId + grid.cellsX; cellId++) {
+      const tempAltitudeDrop = getAltitudeTemperatureDrop(cells.h[cellId]);
+      cells.temp[cellId] = minmax(tempSeaLevel - tempAltitudeDrop, -128, 127);
+    }
+  }
+
+  function calculateSeaLevelTemp(latitude) {
+    const isTropical = latitude <= 16 && latitude >= -20;
+    if (isTropical) return temperatureEquator - Math.abs(latitude) * tropicalGradient;
+
+    return latitude > 0
+      ? tempNorthTropic - (latitude - tropics[0]) * northernGradient
+      : tempSouthTropic + (latitude - tropics[1]) * southernGradient;
+  }
+
+  // temperature drops by 6.5°C per 1km of altitude
+  function getAltitudeTemperatureDrop(h) {
+    if (h < 20) return 0;
+    const height = Math.pow(h - 18, exponent);
+    return rn((height / 1000) * 6.5);
+  }
+
+  TIME && console.timeEnd("calculateTemperatures");
+}
 
 // simplest precipitation model
 function generatePrecipitation() {
-  PrecipitationGenerator.generate();
-}
+  TIME && console.time("generatePrecipitation");
+  d3.select("#prec").selectAll("*").remove();
+  const { cells, cellsX, cellsY } = grid;
+  cells.prec = new Uint8Array(cells.i.length); // precipitation array
 
+  const cellsNumberModifier = (pointsInput.dataset.cells / 10000) ** 0.25;
+  const precInputModifier = options.prec / 100;
+  const modifier = cellsNumberModifier * precInputModifier;
+
+  const westerly = [];
+  const easterly = [];
+  let southerly = 0;
+  let northerly = 0;
+
+  // precipitation modifier per latitude band
+  // x4 = 0-5 latitude: wet through the year (rising zone)
+  // x2 = 5-20 latitude: wet summer (rising zone), dry winter (sinking zone)
+  // x1 = 20-30 latitude: dry all year (sinking zone)
+  // x2 = 30-50 latitude: wet winter (rising zone), dry summer (sinking zone)
+  // x3 = 50-60 latitude: wet all year (rising zone)
+  // x2 = 60-70 latitude: wet summer (rising zone), dry winter (sinking zone)
+  // x1 = 70-85 latitude: dry all year (sinking zone)
+  // x0.5 = 85-90 latitude: dry all year (sinking zone)
+  const latitudeModifier = [4, 2, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 1, 1, 1, 0.5];
+  const MAX_PASSABLE_ELEVATION = 85;
+
+  // define wind directions based on cells latitude and prevailing winds there
+  d3.range(0, cells.i.length, cellsX).forEach(function (c, i) {
+    const lat = mapCoordinates.latN - (i / cellsY) * mapCoordinates.latT;
+    const latBand = ((Math.abs(lat) - 1) / 5) | 0;
+    const latMod = latitudeModifier[latBand];
+    const windTier = (Math.abs(lat - 89) / 30) | 0; // 30d tiers from 0 to 5 from N to S
+    const { isWest, isEast, isNorth, isSouth } = getWindDirections(windTier);
+
+    if (isWest) westerly.push([c, latMod, windTier]);
+    if (isEast) easterly.push([c + cellsX - 1, latMod, windTier]);
+    if (isNorth) northerly++;
+    if (isSouth) southerly++;
+  });
+
+  // distribute winds by direction
+  if (westerly.length) passWind(westerly, 120 * modifier, 1, cellsX);
+  if (easterly.length) passWind(easterly, 120 * modifier, -1, cellsX);
+
+  const vertT = southerly + northerly;
+  if (northerly) {
+    const bandN = ((Math.abs(mapCoordinates.latN) - 1) / 5) | 0;
+    const latModN = mapCoordinates.latT > 60 ? d3.mean(latitudeModifier) : latitudeModifier[bandN];
+    const maxPrecN = (northerly / vertT) * 60 * modifier * latModN;
+    passWind(d3.range(0, cellsX, 1), maxPrecN, cellsX, cellsY);
+  }
+
+  if (southerly) {
+    const bandS = ((Math.abs(mapCoordinates.latS) - 1) / 5) | 0;
+    const latModS = mapCoordinates.latT > 60 ? d3.mean(latitudeModifier) : latitudeModifier[bandS];
+    const maxPrecS = (southerly / vertT) * 60 * modifier * latModS;
+    passWind(d3.range(cells.i.length - cellsX, cells.i.length, 1), maxPrecS, -cellsX, cellsY);
+  }
+
+  function getWindDirections(tier) {
+    const angle = options.winds[tier];
+
+    const isWest = angle > 40 && angle < 140;
+    const isEast = angle > 220 && angle < 320;
+    const isNorth = angle > 100 && angle < 260;
+    const isSouth = angle > 280 || angle < 80;
+
+    return { isWest, isEast, isNorth, isSouth };
+  }
+
+  function passWind(source, maxPrec, next, steps) {
+    const maxPrecInit = maxPrec;
+
+    for (let first of source) {
+      if (first[0]) {
+        maxPrec = Math.min(maxPrecInit * first[1], 255);
+        first = first[0];
+      }
+
+      let humidity = maxPrec - cells.h[first]; // initial water amount
+      if (humidity <= 0) continue; // if first cell in row is too elevated consider wind dry
+
+      for (let s = 0, current = first; s < steps; s++, current += next) {
+        if (cells.temp[current] < -5) continue; // no flux in permafrost
+
+        if (cells.h[current] < 20) {
+          // water cell
+          if (cells.h[current + next] >= 20) {
+            cells.prec[current + next] += Math.max(humidity / rand(10, 20), 1); // coastal precipitation
+          } else {
+            humidity = Math.min(humidity + 5 * modifier, maxPrec); // wind gets more humidity passing water cell
+            cells.prec[current] += 5 * modifier; // water cells precipitation (need to correctly pour water through lakes)
+          }
+          continue;
+        }
+
+        // land cell
+        const isPassable = cells.h[current + next] <= MAX_PASSABLE_ELEVATION;
+        const precipitation = isPassable ? getPrecipitation(humidity, current, next) : humidity;
+        cells.prec[current] += precipitation;
+        const evaporation = precipitation > 1.5 ? 1 : 0; // some humidity evaporates back to the atmosphere
+        humidity = isPassable ? minmax(humidity - precipitation + evaporation, 0, maxPrec) : 0;
+      }
+    }
+  }
+
+  function getPrecipitation(humidity, i, n) {
+    const normalLoss = Math.max(humidity / (10 * modifier), 1); // precipitation in normal conditions
+    const diff = Math.max(cells.h[i + n] - cells.h[i], 0); // difference in height
+    const mod = (cells.h[i + n] / 70) ** 2; // 50 stands for hills, 70 for mountains
+    return minmax(normalLoss + diff * mod, 1, humidity);
+  }
+
+  void (function drawWindDirection() {
+    d3.select("#prec").select("#wind").remove(); // the group survives layer erasure, so replace it
+    const wind = d3.select("#prec").append("g").attr("id", "wind");
+
+    d3.range(0, 6).forEach(function (t) {
+      if (westerly.length > 1) {
+        const west = westerly.filter(w => w[2] === t);
+        if (west && west.length > 3) {
+          const from = west[0][0],
+            to = west[west.length - 1][0];
+          const y = (grid.points[from][1] + grid.points[to][1]) / 2;
+          wind.append("text").attr("text-rendering", "optimizeSpeed").attr("x", 20).attr("y", y).text("\u21C9");
+        }
+      }
+      if (easterly.length > 1) {
+        const east = easterly.filter(w => w[2] === t);
+        if (east && east.length > 3) {
+          const from = east[0][0],
+            to = east[east.length - 1][0];
+          const y = (grid.points[from][1] + grid.points[to][1]) / 2;
+          wind
+            .append("text")
+            .attr("text-rendering", "optimizeSpeed")
+            .attr("x", graphWidth - 52)
+            .attr("y", y)
+            .text("\u21C7");
+        }
+      }
+    });
+
+    if (northerly)
+      wind
+        .append("text")
+        .attr("text-rendering", "optimizeSpeed")
+        .attr("x", graphWidth / 2)
+        .attr("y", 42)
+        .text("\u21CA");
+    if (southerly)
+      wind
+        .append("text")
+        .attr("text-rendering", "optimizeSpeed")
+        .attr("x", graphWidth / 2)
+        .attr("y", graphHeight - 20)
+        .text("\u21C8");
+  })();
+
+  TIME && console.timeEnd("generatePrecipitation");
+}
 
 // recalculate Voronoi Graph to pack cells
 function reGraph() {
@@ -985,7 +1084,7 @@ const regenerateMap = debounce(async function (config) {
   resetZoom(1000);
   undraw();
   await generate(config);
-  drawLayers();
+  Layers.drawAll();
   if (options.threeD.isOn) window.Controllers.View3d.redraw();
   if (findEl("worldConfigurator")?.offsetParent) window.Controllers.WorldConfigurator.open();
 
@@ -996,9 +1095,7 @@ const regenerateMap = debounce(async function (config) {
 
 // clear the map
 function undraw() {
-  viewbox
-    .selectAll("path, circle, polygon, line, text, use, #texture > image, #zones > g, #armies > g, #ruler > g")
-    .remove();
+  Layers.eraseAll();
   ensureEl("deftemp")
     .querySelectorAll("path, clipPath, svg")
     .forEach(el => el.remove());

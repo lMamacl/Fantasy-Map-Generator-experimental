@@ -15,10 +15,12 @@
  * For the changes that may be interesting to end users, update the `latestPublicChanges` array below (new changes on top).
  */
 
-export const VERSION = "1.141.2";
+export const VERSION = "1.144.1";
 
 const latestPublicChanges = [
+  "Relief icons: improved performance",
   "Configurable table columns",
+  "Labels: improved performance",
   "Labels Overview",
   "Route and river labels",
   "Economic simulation",
