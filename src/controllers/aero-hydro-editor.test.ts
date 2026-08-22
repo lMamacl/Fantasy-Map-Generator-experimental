@@ -31,6 +31,8 @@ describe("AeroHydroEditor", () => {
 
     document.body.innerHTML = `
       <div id="dialogs"></div>
+      <div id="winds"></div>
+      <div id="oceanCurrents"></div>
       <input id="oceanWindStressInput" value="0.04" />
       <input id="ekmanAngleInput" value="40" />
       <input id="westernIntensificationInput" value="2.5" />
@@ -43,12 +45,31 @@ describe("AeroHydroEditor", () => {
     aeroHydroEditor = mod.AeroHydroEditor;
   });
 
-  it("generuje strukturę HTML dialogu edytora", () => {
+  it("generuje strukturę HTML dialogu edytora z kontrolkami warstw i pojedynczym przyciskiem dodawania", () => {
     const html = aeroHydroEditor.createDialogHtml();
     expect(html).toContain('id="aeroHydroEditor"');
     expect(html).toContain("Baric Centers");
+    expect(html).toContain("+ Add Baric Center");
+    expect(html).toContain("Wind & Pressure (SVG)");
+    expect(html).toContain("Ocean Currents (SVG)");
+    expect(html).toContain("Flow Particles (Canvas)");
     expect(html).toContain("Ocean Wind Stress");
     expect(html).toContain("Orographic Condensation");
+  });
+
+  it("renderBaricCentersList() renderuje edytowalne inputy i automatycznie klasyfikuje typ", () => {
+    aeroHydroEditor.renderBaricCentersList();
+    const listEl = document.getElementById("baricCentersList");
+    expect(listEl?.innerHTML).toContain("centerPressureInput");
+    expect(listEl?.innerHTML).toContain("H (High)");
+
+    // Zmień ciśnienie na niżowe (np. 980 hPa)
+    const options = (globalThis as any).options;
+    options.atmosphere.baricCenters[0].pressureHPa = 980;
+    aeroHydroEditor.renderBaricCentersList();
+
+    expect(listEl?.innerHTML).toContain("L (Low)");
+    expect(options.atmosphere.baricCenters[0].type).toBe("low");
   });
 
   it("applyChanges() poprawnie zapisuje wartości do globalThis.options", () => {

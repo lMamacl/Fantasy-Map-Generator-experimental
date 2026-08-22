@@ -2,17 +2,19 @@
  * Kontroler edytora klimatu, wiatrów i hydrologii Aero-Hydro 2.0.
  *
  * Umożliwia:
- *   - Interaktywną edycję ośrodków barycznych (wyże, niże, położenie, ciśnienie, promień).
+ *   - Edycję parametrów ośrodków barycznych (wyże, niże, położenie, ciśnienie, promień)
+ *     z automatyczną klasyfikacją typu na podstawie wartości ciśnienia (p >= 1013 hPa -> High, p < 1013 hPa -> Low).
  *   - Konfigurację parametrów fizycznych atmosfery, cyrkulacji oceanicznej i wilgoci.
- *   - Sterowanie animacją cząstek i wizualizacją wstęg przepływu.
- *   - Natychmiastowe przeliczanie modelu Aero-Hydro 2.0.
+ *   - Przełączanie warstw widoku (Wiatry SVG, Prądy morskie SVG, Animacja cząstek Canvas 60 FPS).
+ *   - Automatyczną aktywację podglądu przy wejściu do edytora.
  *
  * @module controllers/aero-hydro-editor
  */
 
+import { Layers } from "@/components/layers";
 import { AeroHydro } from "@/generators/aero-hydro";
 import { ParticleAnimator } from "@/renderers/aero-hydro/canvas-particle-animator";
-import { StreamlineRenderer } from "@/renderers/aero-hydro/streamline-renderer";
+import { drawOceanCurrents, drawWinds, removeOceanCurrents, removeWinds } from "@/renderers/aero-hydro/draw-aero-hydro";
 import type { BaricCenter } from "@/types/aero-hydro";
 import { ensureEl } from "../utils";
 
@@ -35,16 +37,29 @@ function open(): void {
   renderDialog();
   updateInputValues();
 
+  // Automatycznie włącz warstwę wiatrów po wejściu do edytora
+  try {
+    if (Layers?.show) {
+      Layers.show("winds");
+    } else {
+      drawWinds();
+    }
+  } catch (_e) {
+    drawWinds();
+  }
+
   const g = globalThis as any;
   if (typeof g.$ === "function") {
     g.$("#aeroHydroEditor").dialog({
       title: "Aero-Hydro Climate & Hydrology Editor",
       resizable: false,
-      width: "minmax(42em, 85vw)",
+      width: "minmax(46em, 88vw)",
       buttons: {
         "Recalculate Climate": () => {
           applyChanges();
           AeroHydro.generate();
+          drawWinds();
+          drawOceanCurrents();
         },
         Close: () => closeDialog("aeroHydroEditor")
       },
@@ -70,49 +85,51 @@ function createDialogHtml(): string {
     <div style="display: flex; gap: 1.5em; flex-wrap: wrap;">
       
       <!-- Kolumna 1: Centra baryczne -->
-      <div style="flex: 1; min-width: 20em;">
+      <div style="flex: 1.2; min-width: 22em;">
         <fieldset>
-          <legend><b>Baric Centers (High / Low Pressure)</b></legend>
-          <div id="baricCentersList" style="max-height: 15em; overflow-y: auto; margin-bottom: 0.5em;"></div>
+          <legend><b>Baric Centers (Atmospheric Pressure)</b></legend>
+          <div id="baricCentersList" style="max-height: 16em; overflow-y: auto; margin-bottom: 0.6em;"></div>
           <div style="display: flex; gap: 0.5em;">
-            <button id="addHighCenterBtn" class="btn btn-sm" data-tip="Add High Pressure Center (Anticyclone)">+ Add High (H)</button>
-            <button id="addLowCenterBtn" class="btn btn-sm" data-tip="Add Low Pressure Center (Cyclone)">+ Add Low (L)</button>
+            <button id="addBaricCenterBtn" class="btn btn-sm" data-tip="Add a new atmospheric pressure center (auto High/Low based on p)">+ Add Baric Center</button>
           </div>
         </fieldset>
 
         <fieldset style="margin-top: 1em;">
-          <legend><b>Flow Visualization & Animation</b></legend>
-          <div style="display: flex; gap: 0.5em; margin-bottom: 0.5em;">
-            <button id="toggleParticlesBtn" class="btn btn-sm" data-tip="Start/Stop 60 FPS Canvas particle animation">Toggle Particles</button>
-            <button id="rebuildStreamlinesBtn" class="btn btn-sm" data-tip="Rebuild SVG streamlines and vectors">Rebuild Streamlines</button>
+          <legend><b>Visualization & Map Layers</b></legend>
+          <div style="display: flex; flex-direction: column; gap: 0.4em;">
+            <div style="display: flex; gap: 0.5em; flex-wrap: wrap;">
+              <button id="toggleWindsLayerBtn" class="btn btn-sm" data-tip="Toggle 2D Wind Streamlines & Baric Center Markers on map">Wind & Pressure (SVG)</button>
+              <button id="toggleOceanLayerBtn" class="btn btn-sm" data-tip="Toggle Ocean Current Streamlines on map">Ocean Currents (SVG)</button>
+              <button id="toggleParticlesLayerBtn" class="btn btn-sm" data-tip="Toggle 60 FPS animated flow particles overlay (Canvas 2D)">Flow Particles (Canvas)</button>
+            </div>
           </div>
         </fieldset>
       </div>
 
       <!-- Kolumna 2: Parametry fizyczne -->
-      <div style="flex: 1; min-width: 20em;">
+      <div style="flex: 1; min-width: 19em;">
         <fieldset>
           <legend><b>Atmosphere & Ocean Physics</b></legend>
-          <div style="display: flex; flex-direction: column; gap: 0.4em;">
-            <label data-tip="Wind stress coupling factor to ocean surface">
+          <div style="display: flex; flex-direction: column; gap: 0.45em;">
+            <label data-tip="Wind stress coupling factor to ocean surface (0.01 - 0.08)">
               <i>Ocean Wind Stress:</i>
-              <input id="oceanWindStressInput" type="number" step="0.005" min="0.01" max="0.1" style="width: 5em;" />
+              <input id="oceanWindStressInput" type="number" step="0.005" min="0.01" max="0.1" style="width: 5.5em;" />
             </label>
-            <label data-tip="Ekman deflection angle (degrees)">
+            <label data-tip="Ekman surface layer deflection angle (degrees)">
               <i>Ekman Deflection Angle:</i>
-              <input id="ekmanAngleInput" type="number" step="1" min="0" max="45" style="width: 5em;" />°
+              <input id="ekmanAngleInput" type="number" step="1" min="0" max="45" style="width: 5.5em;" />°
             </label>
-            <label data-tip="Western boundary current intensification multiplier">
+            <label data-tip="Western boundary current intensification multiplier (1.0 - 4.0)">
               <i>Western Boundary Intensification:</i>
-              <input id="westernIntensificationInput" type="number" step="0.1" min="1.0" max="4.0" style="width: 5em;" />×
+              <input id="westernIntensificationInput" type="number" step="0.1" min="1.0" max="4.0" style="width: 5.5em;" />×
             </label>
             <label data-tip="Orographic rainout condensation rate on mountain slopes">
               <i>Orographic Condensation:</i>
-              <input id="orographicCondensationInput" type="number" step="0.1" min="0.1" max="2.0" style="width: 5em;" />
+              <input id="orographicCondensationInput" type="number" step="0.1" min="0.1" max="2.0" style="width: 5.5em;" />
             </label>
             <label data-tip="Foehn adiabatic warming rate in rain shadow">
               <i>Foehn Effect Heating:</i>
-              <input id="foehnHeatingInput" type="number" step="0.1" min="0.1" max="2.0" style="width: 5em;" />
+              <input id="foehnHeatingInput" type="number" step="0.1" min="0.1" max="2.0" style="width: 5.5em;" />
             </label>
           </div>
         </fieldset>
@@ -154,29 +171,84 @@ function renderBaricCentersList(): void {
 
   if (centers.length === 0) {
     listEl.innerHTML =
-      "<div style='font-style: italic; color: #888;'>No baric centers defined. Zonal base state active.</div>";
+      "<div style='font-style: italic; color: #888; padding: 0.5em;'>No baric centers defined. Standard zonal base state active.</div>";
     return;
   }
 
-  let html = "<table style='width: 100%; border-collapse: collapse; font-size: 0.9em;'>";
-  html += "<thead><tr><th>Type</th><th>X, Y</th><th>p (hPa)</th><th>R (km)</th><th></th></tr></thead><tbody>";
+  let html = "<table style='width: 100%; border-collapse: collapse; font-size: 0.88em;'>";
+  html +=
+    "<thead><tr><th style='text-align: left;'>Type</th><th>p (hPa)</th><th>R (km)</th><th>X, Y</th><th></th></tr></thead><tbody>";
 
   for (let i = 0; i < centers.length; i++) {
     const c = centers[i];
-    const badgeColor = c.type === "high" ? "#d9534f" : "#0275d8";
-    const typeLabel = c.type === "high" ? "H (High)" : "L (Low)";
+    // Automatyczna klasyfikacja na podstawie wartości ciśnienia (>= 1013 -> High, < 1013 -> Low)
+    const isHigh = c.pressureHPa >= 1013;
+    c.type = isHigh ? "high" : "low";
+    const badgeColor = isHigh ? "#dc2626" : "#2563eb";
+    const typeLabel = isHigh ? "H (High)" : "L (Low)";
 
-    html += `<tr>
-      <td><span style="background: ${badgeColor}; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;">${typeLabel}</span></td>
-      <td>${Math.round(c.x)}, ${Math.round(c.y)}</td>
-      <td>${Math.round(c.pressureHPa)}</td>
-      <td>${Math.round(c.radiusKm)}</td>
-      <td><button class="removeCenterBtn btn btn-sm" data-index="${i}" style="color: red; cursor: pointer;">✕</button></td>
+    html += `<tr style="border-bottom: 1px solid #eee;">
+      <td style="padding: 4px 2px;"><span id="badge_type_${i}" style="background: ${badgeColor}; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold;">${typeLabel}</span></td>
+      <td style="padding: 4px 2px;"><input type="number" class="centerPressureInput" data-index="${i}" value="${Math.round(c.pressureHPa)}" min="940" max="1060" step="1" style="width: 4.8em;" /></td>
+      <td style="padding: 4px 2px;"><input type="number" class="centerRadiusInput" data-index="${i}" value="${Math.round(c.radiusKm)}" min="300" max="6000" step="100" style="width: 4.5em;" /></td>
+      <td style="padding: 4px 2px; white-space: nowrap;">
+        <input type="number" class="centerXInput" data-index="${i}" value="${Math.round(c.x)}" style="width: 3.6em;" />
+        <input type="number" class="centerYInput" data-index="${i}" value="${Math.round(c.y)}" style="width: 3.6em;" />
+      </td>
+      <td style="padding: 4px 2px;"><button class="removeCenterBtn btn btn-sm" data-index="${i}" style="color: red; cursor: pointer; padding: 2px 6px;">✕</button></td>
     </tr>`;
   }
 
   html += "</tbody></table>";
   listEl.innerHTML = html;
+
+  // Podepnij live edycję pól ciśnienia, promienia i pozycji
+  const pressureInputs = listEl.querySelectorAll<HTMLInputElement>(".centerPressureInput");
+  pressureInputs.forEach(inp => {
+    inp.addEventListener("input", e => {
+      const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
+      const val = Number((e.currentTarget as HTMLInputElement).value) || 1013;
+      centers[idx].pressureHPa = val;
+      const isHigh = val >= 1013;
+      centers[idx].type = isHigh ? "high" : "low";
+
+      const badge = document.getElementById(`badge_type_${idx}`);
+      if (badge) {
+        badge.textContent = isHigh ? "H (High)" : "L (Low)";
+        badge.style.background = isHigh ? "#dc2626" : "#2563eb";
+      }
+      drawWinds();
+    });
+  });
+
+  const radiusInputs = listEl.querySelectorAll<HTMLInputElement>(".centerRadiusInput");
+  radiusInputs.forEach(inp => {
+    inp.addEventListener("input", e => {
+      const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
+      const val = Number((e.currentTarget as HTMLInputElement).value) || 2000;
+      centers[idx].radiusKm = val;
+    });
+  });
+
+  const xInputs = listEl.querySelectorAll<HTMLInputElement>(".centerXInput");
+  xInputs.forEach(inp => {
+    inp.addEventListener("input", e => {
+      const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
+      const val = Number((e.currentTarget as HTMLInputElement).value) || 0;
+      centers[idx].x = val;
+      drawWinds();
+    });
+  });
+
+  const yInputs = listEl.querySelectorAll<HTMLInputElement>(".centerYInput");
+  yInputs.forEach(inp => {
+    inp.addEventListener("input", e => {
+      const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
+      const val = Number((e.currentTarget as HTMLInputElement).value) || 0;
+      centers[idx].y = val;
+      drawWinds();
+    });
+  });
 
   // Podepnij usuwanie
   const removeButtons = listEl.querySelectorAll(".removeCenterBtn");
@@ -185,53 +257,75 @@ function renderBaricCentersList(): void {
       const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
       centers.splice(idx, 1);
       renderBaricCentersList();
+      drawWinds();
     });
   });
 }
 
 function addListeners(): void {
-  const addHighBtn = document.getElementById("addHighCenterBtn");
-  addHighBtn?.addEventListener("click", () => {
-    addCenter("high");
+  const addCenterBtn = document.getElementById("addBaricCenterBtn");
+  addCenterBtn?.addEventListener("click", () => {
+    addCenter();
   });
 
-  const addLowBtn = document.getElementById("addLowCenterBtn");
-  addLowBtn?.addEventListener("click", () => {
-    addCenter("low");
-  });
-
-  const toggleParticlesBtn = document.getElementById("toggleParticlesBtn");
-  toggleParticlesBtn?.addEventListener("click", () => {
-    const isRunning = (ParticleAnimator as any).isRunning;
-    if (isRunning) {
-      ParticleAnimator.stop();
+  const toggleWindsBtn = document.getElementById("toggleWindsLayerBtn");
+  toggleWindsBtn?.addEventListener("click", () => {
+    if (Layers?.toggle) {
+      Layers.toggle("winds");
     } else {
-      let canvas = document.getElementById("aeroHydroParticleCanvas") as HTMLCanvasElement;
-      if (!canvas) {
-        canvas = document.createElement("canvas");
-        canvas.id = "aeroHydroParticleCanvas";
-        canvas.width = (globalThis as any).graphWidth || 1000;
-        canvas.height = (globalThis as any).graphHeight || 1000;
-        canvas.style.position = "absolute";
-        canvas.style.top = "0";
-        canvas.style.left = "0";
-        canvas.style.pointerEvents = "none";
-        canvas.style.zIndex = "10";
-        document.body.appendChild(canvas);
+      const g = document.getElementById("winds");
+      if (g && g.children.length > 0) {
+        removeWinds();
+      } else {
+        drawWinds();
       }
-      ParticleAnimator.init(canvas);
-      ParticleAnimator.start();
     }
   });
 
-  const rebuildStreamlinesBtn = document.getElementById("rebuildStreamlinesBtn");
-  rebuildStreamlinesBtn?.addEventListener("click", () => {
-    StreamlineRenderer.generateStreamlines("wind");
-    StreamlineRenderer.generateStreamlines("ocean");
+  const toggleOceanBtn = document.getElementById("toggleOceanLayerBtn");
+  toggleOceanBtn?.addEventListener("click", () => {
+    if (Layers?.toggle) {
+      Layers.toggle("oceanCurrents");
+    } else {
+      const g = document.getElementById("oceanCurrents");
+      if (g && g.children.length > 0) {
+        removeOceanCurrents();
+      } else {
+        drawOceanCurrents();
+      }
+    }
+  });
+
+  const toggleParticlesBtn = document.getElementById("toggleParticlesLayerBtn");
+  toggleParticlesBtn?.addEventListener("click", () => {
+    if (Layers?.toggle) {
+      Layers.toggle("flowAnimation");
+    } else {
+      const isRunning = (ParticleAnimator as any).isRunning;
+      if (isRunning) {
+        ParticleAnimator.stop();
+      } else {
+        let canvas = document.getElementById("aeroHydroParticleCanvas") as HTMLCanvasElement;
+        if (!canvas) {
+          canvas = document.createElement("canvas");
+          canvas.id = "aeroHydroParticleCanvas";
+          canvas.width = (globalThis as any).graphWidth || 1000;
+          canvas.height = (globalThis as any).graphHeight || 1000;
+          canvas.style.position = "absolute";
+          canvas.style.top = "0";
+          canvas.style.left = "0";
+          canvas.style.pointerEvents = "none";
+          canvas.style.zIndex = "10";
+          document.body.appendChild(canvas);
+        }
+        ParticleAnimator.init(canvas);
+        ParticleAnimator.start();
+      }
+    }
   });
 }
 
-function addCenter(type: "high" | "low"): void {
+function addCenter(): void {
   const g = globalThis as any;
   if (!g.options) g.options = {};
   const options = g.options;
@@ -241,17 +335,19 @@ function addCenter(type: "high" | "low"): void {
   const graphWidth = (globalThis as any).graphWidth || 1000;
   const graphHeight = (globalThis as any).graphHeight || 1000;
 
+  // Domyślnie utwórz antycyklon o p = 1030 hPa, użytkownik może edytować p w tabeli co automatycznie zmieni typ
   const newCenter: BaricCenter = {
     x: Math.round(graphWidth * (0.3 + Math.random() * 0.4)),
     y: Math.round(graphHeight * (0.3 + Math.random() * 0.4)),
-    type,
-    pressureHPa: type === "high" ? 1032 : 985,
+    type: "high",
+    pressureHPa: 1030,
     radiusKm: 2500,
     thermalOrigin: false
   };
 
   options.atmosphere.baricCenters.push(newCenter);
   renderBaricCentersList();
+  drawWinds();
 }
 
 function applyChanges(): void {
@@ -282,5 +378,7 @@ export const AeroHydroEditor = {
   renderDialog,
   createDialogHtml,
   updateInputValues,
+  renderBaricCentersList,
+  addCenter,
   applyChanges
 };
