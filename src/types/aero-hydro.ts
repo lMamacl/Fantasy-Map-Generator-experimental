@@ -105,6 +105,12 @@ export interface MoistureConfig {
   advectionPasses: number;
   /** Współczynnik dyfuzji atmosferycznej wygładzającej gradienty */
   diffusionCoeff: number;
+  /** Ułamek wymiany masy wilgoci w jednym kroku adwekcji (0.2–0.8, domyślnie 0.6) */
+  advectionRate?: number;
+  /** Wydajność kondensacji orograficznej przy wznoszeniu mas powietrza (0.4–0.9, domyślnie 0.75) */
+  orographicEfficiency?: number;
+  /** Stopa naturalnego opadu bazowego z kolumny wilgoci (0.02–0.15, domyślnie 0.08) */
+  baseRainoutRate?: number;
 }
 
 /** Domyślne wartości domyślne dla MoistureConfig */
@@ -112,7 +118,10 @@ export function defaultMoistureConfig(): MoistureConfig {
   return {
     minPrecipMmYr: 10,
     advectionPasses: 4,
-    diffusionCoeff: 0.15
+    diffusionCoeff: 0.15,
+    advectionRate: 0.6,
+    orographicEfficiency: 0.75,
+    baseRainoutRate: 0.08
   };
 }
 

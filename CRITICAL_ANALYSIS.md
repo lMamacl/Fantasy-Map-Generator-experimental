@@ -29,7 +29,7 @@ Agenty otrzymują błędne wskaźówki! Dokumenty mówią "utwórz nowy plik `sr
 - Większość logiki klimatu jest w **jednym dużym pliku `public/main.js`**
 - Przeniesienie do TypeScript wymagałoby **zaraz refaktoryzacji całego pipeline'a**
 
-### Pliki Zmodyfikowane / Utworzone w Pętlach 0, 1 i 2
+### Pliki Zmodyfikowane / Utworzone w Pętlach 0, 1, 2 i 3
 | Plik | Pętla | Status | Opis |
 |------|-------|--------|------|
 | `src/types/aero-hydro.ts` | Pętla 0 | ✅ UTWORZONY | Ścisłe typy pól fizycznych, konfiguracji i ośrodków barycznych |
@@ -41,21 +41,20 @@ Agenty otrzymują błędne wskaźówki! Dokumenty mówią "utwórz nowy plik `sr
 | `src/generators/aero-hydro/atmosphere-engine.test.ts` | Pętla 1 | ✅ UTWORZONY | 8 testów jednostkowych atmosfery i wiatrów (PASS) |
 | `src/generators/aero-hydro/ocean-engine.ts` | Pętla 2 | ✅ UTWORZONY | Silnik cyrkulacji oceanicznej (Ekman, Western Intensification, SST Anomaly) |
 | `src/generators/aero-hydro/ocean-engine.test.ts` | Pętla 2 | ✅ UTWORZONY | 8 testów jednostkowych prądów morskich i SST (PASS) |
-| `src/generators/aero-hydro/index.ts` | Pętle 1-2 | ✅ UTWORZONY | Główny koordynator AeroHydro (Atmosphere + Ocean) i bridge do window |
+| `src/generators/aero-hydro/moisture-advection-engine.ts` | Pętla 3 | ✅ UTWORZONY | Silnik wilgoci 2D, Clausius-Clapeyron, orografia, dyfuzja |
+| `src/generators/aero-hydro/moisture-advection-engine.test.ts` | Pętla 3 | ✅ UTWORZONY | 8 testów jednostkowych wilgoci i opadów (PASS) |
+| `src/generators/aero-hydro/index.ts` | Pętle 1-3 | ✅ UTWORZONY | Główny koordynator AeroHydro (Atmo + Ocean + Moisture) i bridge do window |
 | `src/generators/index.ts` | Pętla 1 | ✅ ZMODYFIKOWANY | Rejestracja modułu ./aero-hydro w barrel file |
 
-### Pliki do Realizacji w Kolejnych Pętlach (3–6)
+### Pliki do Realizacji w Kolejnych Pętlach (4–6)
 | Plik | Pętla | Rola |
 |------|-------|------|
-| `src/generators/aero-hydro/moisture-advection-engine.ts` | Pętla 3 | Adwekcja wilgoci 2D, Clausius-Clapeyron, orografia |
 | `src/generators/aero-hydro/hydrology-engine.ts` | Pętla 4 | Priority-Flood, bilans jezior, spływ rzek |
 | `src/generators/river-generator.ts` | Pętla 4 | Refaktoryzacja Leopolda-Maddocka ($W \propto Q^{0.5}$) |
 | `src/renderers/aero-hydro/streamline-renderer.ts` | Pętla 5 | Agregacja strzałek (4-8 komórek, separacja 2-3 kratek) |
 | `src/renderers/aero-hydro/canvas-particle-animator.ts` | Pętla 5 | Silnik cząstek Canvas 2D (60 FPS) |
 | `src/controllers/aero-hydro-editor.ts` | Pętla 6 | Edytor centrów barycznych i podglądu |
 | `public/main.js` | Pętla 6 | Podpięcie AeroHydro do głównego pipeline'a |
-
-
 
 ---
 
