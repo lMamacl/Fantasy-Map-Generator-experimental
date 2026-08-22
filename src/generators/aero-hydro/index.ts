@@ -7,28 +7,33 @@
  * @module generators/aero-hydro
  */
 
+import { AtmosphereEngine } from "./atmosphere-engine";
+import { OceanEngine } from "./ocean-engine";
+
 export class AeroHydroModule {
   /**
    * Cechy przepływowe (wstęgi wiatru, prądy morskie) wygenerowane przez silniki.
-   * Wypełniane przez pętle 1–5; w Pętli 0 pozostaje puste.
+   * Wypełniane przez pętle 1–5.
    */
   flowFeatures: any[] = [];
 
   /**
    * Wykonuje pełny potok fizyczny klimatu i hydrologii.
-   *
-   * W Pętli 0 inicjalizuje tylko puste struktury. W kolejnych pętlach
-   * zostaną wpięte: AtmosphereEngine → OceanEngine → MoistureEngine → HydrologyEngine.
+   * Sekwencja: AtmosphereEngine → OceanEngine (P2) → MoistureEngine (P3) → HydrologyEngine (P4).
    */
   generate(): void {
     if (typeof TIME !== "undefined" && TIME) console.time("generateAeroHydro");
 
     this.flowFeatures = []; // reset
 
-    // Placeholder: w Pętli 1 zostanie tu wpięty AtmosphereEngine.generate()
-    // W Pętli 2 OceanEngine.generate()
-    // W Pętli 3 MoistureEngine.generate()
-    // W Pętli 4 HydrologyEngine.generate()
+    // Pętla 1: Silnik atmosfery i 2D pola ciśnienia
+    AtmosphereEngine.generate();
+
+    // Pętla 2: Silnik cyrkulacji oceanicznej i anomalii SST
+    OceanEngine.generate();
+
+    // Pętla 3: MoistureEngine.generate()
+    // Pętla 4: HydrologyEngine.generate()
 
     if (typeof TIME !== "undefined" && TIME) console.timeEnd("generateAeroHydro");
   }

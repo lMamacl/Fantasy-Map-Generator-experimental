@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  isValidBaricCenter,
-  defaultAtmosphereConfig,
-  defaultOceanCurrentsConfig,
-  defaultMoistureConfig,
-  createAeroHydroCells,
   type AeroHydroCells,
   type BaricCenter,
+  createAeroHydroCells,
+  defaultAtmosphereConfig,
+  defaultMoistureConfig,
+  defaultOceanCurrentsConfig,
+  isValidBaricCenter
 } from "./aero-hydro";
 
 describe("AeroHydro type definitions", () => {
@@ -20,7 +20,7 @@ describe("AeroHydro type definitions", () => {
       oceanU: new Float32Array(n),
       oceanV: new Float32Array(n),
       sstAnomaly: new Float32Array(n),
-      moisture: new Float32Array(n),
+      moisture: new Float32Array(n)
     };
     expect(cells.pressure).toBeInstanceOf(Float32Array);
     expect(cells.pressure.length).toBe(n);
@@ -51,7 +51,7 @@ describe("AeroHydro type definitions", () => {
       type: "high",
       pressureHPa: 1028,
       radiusKm: 1500,
-      thermalOrigin: false,
+      thermalOrigin: false
     };
     expect(isValidBaricCenter(valid)).toBe(true);
   });

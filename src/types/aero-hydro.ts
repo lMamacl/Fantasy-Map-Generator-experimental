@@ -68,7 +68,7 @@ export function defaultAtmosphereConfig(): AtmosphereConfig {
     baricCenters: [],
     frictionAngleOcean: 20,
     frictionAngleLand: 35,
-    coriolisFloor: 1e-5,
+    coriolisFloor: 1e-5
   };
 }
 
@@ -90,7 +90,7 @@ export function defaultOceanCurrentsConfig(): OceanCurrentsConfig {
   return {
     windStressFactor: 0.03,
     ekmanAngle: 20,
-    westernIntensification: 2.2,
+    westernIntensification: 2.2
   };
 }
 
@@ -112,7 +112,7 @@ export function defaultMoistureConfig(): MoistureConfig {
   return {
     minPrecipMmYr: 10,
     advectionPasses: 4,
-    diffusionCoeff: 0.15,
+    diffusionCoeff: 0.15
   };
 }
 
@@ -151,6 +151,6 @@ export function createAeroHydroCells(n: number): AeroHydroCells {
     oceanU: new Float32Array(n),
     oceanV: new Float32Array(n),
     sstAnomaly: new Float32Array(n),
-    moisture: new Float32Array(n),
+    moisture: new Float32Array(n)
   };
 }

@@ -29,21 +29,24 @@ Agenty otrzymują błędne wskaźówki! Dokumenty mówią "utwórz nowy plik `sr
 - Większość logiki klimatu jest w **jednym dużym pliku `public/main.js`**
 - Przeniesienie do TypeScript wymagałoby **zaraz refaktoryzacji całego pipeline'a**
 
-##### Pliki Zmodyfikowane / Utworzone w Pętli 0
-| Plik | Status | Opis |
-|------|--------|------|
-| `src/types/aero-hydro.ts` | ✅ UTWORZONY | Ścisłe typy pól fizycznych, konfiguracji i ośrodków barycznych |
-| `src/types/global.ts` | ✅ ZMODYFIKOWANY | Dodanie opcjonalnych konfiguracji aero-hydro i typu AeroHydro |
-| `src/utils/grid-math.ts` | ✅ UTWORZONY | Operacje różniczkowe, IDW gradient, rzutowanie brzegowe, RK2 streamline |
-| `src/types/aero-hydro.test.ts` | ✅ UTWORZONY | Testy typów Aero-Hydro (PASS) |
-| `src/utils/grid-math.test.ts` | ✅ UTWORZONY | 8 testów jednostkowych matematyki siatki (PASS) |
+### Pliki Zmodyfikowane / Utworzone w Pętlach 0, 1 i 2
+| Plik | Pętla | Status | Opis |
+|------|-------|--------|------|
+| `src/types/aero-hydro.ts` | Pętla 0 | ✅ UTWORZONY | Ścisłe typy pól fizycznych, konfiguracji i ośrodków barycznych |
+| `src/types/global.ts` | Pętla 0 | ✅ ZMODYFIKOWANY | Dodanie opcjonalnych konfiguracji aero-hydro i typu AeroHydro |
+| `src/utils/grid-math.ts` | Pętla 0 | ✅ UTWORZONY | Operacje różniczkowe, IDW gradient, rzutowanie brzegowe, RK2 streamline |
+| `src/types/aero-hydro.test.ts` | Pętla 0 | ✅ UTWORZONY | Testy typów Aero-Hydro (PASS) |
+| `src/utils/grid-math.test.ts` | Pętla 0 | ✅ UTWORZONY | 24 testy jednostkowe matematyki siatki (PASS) |
+| `src/generators/aero-hydro/atmosphere-engine.ts` | Pętla 1 | ✅ UTWORZONY | Silnik 2D pola ciśnienia, Hadleya, Coriolisa i wiatrów |
+| `src/generators/aero-hydro/atmosphere-engine.test.ts` | Pętla 1 | ✅ UTWORZONY | 8 testów jednostkowych atmosfery i wiatrów (PASS) |
+| `src/generators/aero-hydro/ocean-engine.ts` | Pętla 2 | ✅ UTWORZONY | Silnik cyrkulacji oceanicznej (Ekman, Western Intensification, SST Anomaly) |
+| `src/generators/aero-hydro/ocean-engine.test.ts` | Pętla 2 | ✅ UTWORZONY | 8 testów jednostkowych prądów morskich i SST (PASS) |
+| `src/generators/aero-hydro/index.ts` | Pętle 1-2 | ✅ UTWORZONY | Główny koordynator AeroHydro (Atmosphere + Ocean) i bridge do window |
+| `src/generators/index.ts` | Pętla 1 | ✅ ZMODYFIKOWANY | Rejestracja modułu ./aero-hydro w barrel file |
 
-### Pliki do Realizacji w Kolejnych Pętlach (1–6)
+### Pliki do Realizacji w Kolejnych Pętlach (3–6)
 | Plik | Pętla | Rola |
 |------|-------|------|
-| `src/generators/aero-hydro/atmosphere-engine.ts` | Pętla 1 | Model ciśnienia 2D, Coriolisa i wiatrów |
-| `src/generators/aero-hydro/index.ts` | Pętla 1 | Główny koordynator AeroHydro i bridge do window |
-| `src/generators/aero-hydro/ocean-engine.ts` | Pętla 2 | Prądy morskie, transport Ekmana, SST |
 | `src/generators/aero-hydro/moisture-advection-engine.ts` | Pętla 3 | Adwekcja wilgoci 2D, Clausius-Clapeyron, orografia |
 | `src/generators/aero-hydro/hydrology-engine.ts` | Pętla 4 | Priority-Flood, bilans jezior, spływ rzek |
 | `src/generators/river-generator.ts` | Pętla 4 | Refaktoryzacja Leopolda-Maddocka ($W \propto Q^{0.5}$) |
@@ -51,6 +54,8 @@ Agenty otrzymują błędne wskaźówki! Dokumenty mówią "utwórz nowy plik `sr
 | `src/renderers/aero-hydro/canvas-particle-animator.ts` | Pętla 5 | Silnik cząstek Canvas 2D (60 FPS) |
 | `src/controllers/aero-hydro-editor.ts` | Pętla 6 | Edytor centrów barycznych i podglądu |
 | `public/main.js` | Pętla 6 | Podpięcie AeroHydro do głównego pipeline'a |
+
+
 
 ---
 
