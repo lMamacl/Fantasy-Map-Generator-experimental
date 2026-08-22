@@ -29,35 +29,28 @@ Agenty otrzymują błędne wskaźówki! Dokumenty mówią "utwórz nowy plik `sr
 - Większość logiki klimatu jest w **jednym dużym pliku `public/main.js`**
 - Przeniesienie do TypeScript wymagałoby **zaraz refaktoryzacji całego pipeline'a**
 
----
+##### Pliki Zmodyfikowane / Utworzone w Pętli 0
+| Plik | Status | Opis |
+|------|--------|------|
+| `src/types/aero-hydro.ts` | ✅ UTWORZONY | Ścisłe typy pól fizycznych, konfiguracji i ośrodków barycznych |
+| `src/types/global.ts` | ✅ ZMODYFIKOWANY | Dodanie opcjonalnych konfiguracji aero-hydro i typu AeroHydro |
+| `src/utils/grid-math.ts` | ✅ UTWORZONY | Operacje różniczkowe, IDW gradient, rzutowanie brzegowe, RK2 streamline |
+| `src/types/aero-hydro.test.ts` | ✅ UTWORZONY | Testy typów Aero-Hydro (PASS) |
+| `src/utils/grid-math.test.ts` | ✅ UTWORZONY | 8 testów jednostkowych matematyki siatki (PASS) |
 
-## 2. MAPA PLIKÓW: Modyfikacja vs Stworzenie
-
-### Pliki do Modyfikacji (według dokumentów)
-| Plik | Status Rzeczywisty | Problem |
-|------|-------------------|---------|
-| `src/types/global.ts` | ✅ ISTNIEJE (7.7 KB) | Tylko definicje typów, nie zawiera pól `pressure`, `windU`, itp. |
-| `src/generators/river-generator.ts` | ✅ ISTNIEJE (24.4 KB) | Musi być refaktoryzowany zgodnie z Leopoldem-Maddockiem |
-| `src/generators/lakes.ts` | ✅ ISTNIEJE (4.4 KB) | Wymaga dynamicznego bilansu wodnego |
-| `src/generators/biomes-generator.ts` | ✅ ISTNIEJE (4.7 KB) | Musi czytać z nowych rozkładów wilgotności glebowej |
-| `src/generators/resample.ts` | ✅ ISTNIEJE (18.7 KB) | Wymaga dwuliniowej interpolacji pól wektorowych |
-| `src/components/layers.ts` | ✅ ISTNIEJE (14.8 KB) | Rejestracja warstw aero-hydro |
-| `public/main.js` | ✅ ISTNIEJE (38.9 KB) | **KLUCZOWY** - tu jest cały aktualny kod klimatu |
-| `public/modules/ui/heightmap-editor.js` | ✅ ISTNIEJE | Pełni rolę replikatora pipeline'a |
-
-### Pliki do Stworzenia (według dokumentów)
-| Plik | Status Rzeczywisty | Problem |
-|------|-------------------|---------|
-| `src/generators/aero-hydro/atmosphere-engine.ts` | ❌ NIE ISTNIEJE | Musi być utworzony od zera |
-| `src/generators/aero-hydro/ocean-engine.ts` | ❌ NIE ISTNIEJE | Musi być utworzony od zera |
-| `src/generators/aero-hydro/moisture-advection-engine.ts` | ❌ NIE ISTNIEJE | Musi być utworzony od zera |
-| `src/generators/aero-hydro/hydrology-engine.ts` | ❌ NIE ISTNIEJE | Musi być utworzony od zera |
-| `src/generators/aero-hydro/streamline-renderer.ts` | ❌ NIE ISTNIEJE | Musi być utworzony od zera |
-| `src/generators/aero-hydro/aero-hydro-editor.ts` | ❌ NIE ISTNIEJE | Musi być utworzony od zera |
-| `src/utils/grid-math.ts` | ❌ NIE ISTNIEJE | Operator różniczkowy Greena-Gaussa |
-| `src/renderers/aero-hydro/streamlines-renderer.ts` | ❌ NIE ISTNIEJE | Renderer wstęg Lagrangian |
-
-**Uwaga:** Wymaga się utworzenia **8 nowych modułów** w strukturze, która nie jest jeszcze zintegrowana z pipeline'em TypeScript.
+### Pliki do Realizacji w Kolejnych Pętlach (1–6)
+| Plik | Pętla | Rola |
+|------|-------|------|
+| `src/generators/aero-hydro/atmosphere-engine.ts` | Pętla 1 | Model ciśnienia 2D, Coriolisa i wiatrów |
+| `src/generators/aero-hydro/index.ts` | Pętla 1 | Główny koordynator AeroHydro i bridge do window |
+| `src/generators/aero-hydro/ocean-engine.ts` | Pętla 2 | Prądy morskie, transport Ekmana, SST |
+| `src/generators/aero-hydro/moisture-advection-engine.ts` | Pętla 3 | Adwekcja wilgoci 2D, Clausius-Clapeyron, orografia |
+| `src/generators/aero-hydro/hydrology-engine.ts` | Pętla 4 | Priority-Flood, bilans jezior, spływ rzek |
+| `src/generators/river-generator.ts` | Pętla 4 | Refaktoryzacja Leopolda-Maddocka ($W \propto Q^{0.5}$) |
+| `src/renderers/aero-hydro/streamline-renderer.ts` | Pętla 5 | Agregacja strzałek (4-8 komórek, separacja 2-3 kratek) |
+| `src/renderers/aero-hydro/canvas-particle-animator.ts` | Pętla 5 | Silnik cząstek Canvas 2D (60 FPS) |
+| `src/controllers/aero-hydro-editor.ts` | Pętla 6 | Edytor centrów barycznych i podglądu |
+| `public/main.js` | Pętla 6 | Podpięcie AeroHydro do głównego pipeline'a |
 
 ---
 

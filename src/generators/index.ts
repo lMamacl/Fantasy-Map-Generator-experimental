@@ -17,6 +17,7 @@ import "./provinces-generator";
 import "./emblems";
 import "./ice-generator";
 import "./ocean-generator";
+import "./aero-hydro";
 import "./relief-generator";
 import "./military-generator";
 import "./markers-generator";
