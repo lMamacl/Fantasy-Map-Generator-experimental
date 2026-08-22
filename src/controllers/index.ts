@@ -1,7 +1,9 @@
 import { createRegistry } from "@/utils/registry";
 
 export const Controllers = createRegistry({
+  AeroHydroEditor: () => import("@/controllers/aero-hydro-editor").then(m => m.AeroHydroEditor),
   AiGenerator: () => import("@/controllers/ai-generator").then(m => m.AiGenerator),
+
   BattleScreen: () => import("@/controllers/battle-screen").then(m => m.BattleScreen),
   BiomesEditor: () => import("@/controllers/biomes-editor").then(m => m.BiomesEditor),
   BurgCreator: () => import("@/controllers/burg-creator").then(m => m.BurgCreator),

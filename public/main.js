@@ -709,7 +709,19 @@ function calculateMapCoordinates() {
   mapCoordinates = { latT, latN, latS, lonT, lonW, lonE };
 }
 
+// aero-hydro physical climate, atmosphere, ocean circulation and hydrology model
+function generateAeroHydro() {
+  TIME && console.time("generateAeroHydro");
+  if (typeof window.generateAeroHydro === "function") {
+    window.generateAeroHydro();
+  } else if (window.Generators?.AeroHydro) {
+    window.Generators.AeroHydro.generate();
+  }
+  TIME && console.timeEnd("generateAeroHydro");
+}
+
 // temperature model, trying to follow real-world data
+
 // based on http://www-das.uwyo.edu/~geerts/cwx/notes/chap16/Image64.gif
 function calculateTemperatures() {
   TIME && console.time("calculateTemperatures");
