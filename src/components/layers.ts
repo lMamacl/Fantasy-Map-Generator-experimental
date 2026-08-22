@@ -1,6 +1,16 @@
 // Global layers registry: owns layers list, order, and svg skeleton
-import { drawBiomes } from "@/renderers/draw-biomes";
 
+import {
+  drawFlowAnimation,
+  drawOceanCurrents,
+  drawPressure,
+  drawWinds,
+  removeFlowAnimation,
+  removeOceanCurrents,
+  removePressure,
+  removeWinds
+} from "@/renderers/aero-hydro/draw-aero-hydro";
+import { drawBiomes } from "@/renderers/draw-biomes";
 import { drawBorders } from "@/renderers/draw-borders";
 import { drawBurgIcons, removeBurgIcons } from "@/renderers/draw-burg-icons";
 import { drawCells } from "@/renderers/draw-cells";
@@ -349,7 +359,40 @@ const mapLayers = [
     erase: removePrecipitation
   }),
   new Layer({
+    id: "pressure",
+    element: "pressure",
+    parent: "viewbox",
+    children: ["pressureLabels", "pressureCentersMarkers"].map(id => ({ id, tag: "g" })),
+    draw: drawPressure,
+    erase: removePressure
+  }),
+  new Layer({
+    id: "winds",
+    element: "winds",
+    parent: "viewbox",
+    children: ["windStreamlines"].map(id => ({ id, tag: "g" })),
+    draw: drawWinds,
+    erase: removeWinds
+  }),
+  new Layer({
+    id: "oceanCurrents",
+    element: "oceanCurrents",
+    parent: "viewbox",
+    children: ["oceanCurrentStreamlines"].map(id => ({ id, tag: "g" })),
+    draw: drawOceanCurrents,
+    erase: removeOceanCurrents
+  }),
+  new Layer({
+    id: "flowAnimation",
+    element: "flowAnimation",
+    parent: "viewbox",
+    keepContent: true,
+    draw: drawFlowAnimation,
+    erase: removeFlowAnimation
+  }),
+  new Layer({
     id: "population",
+
     parent: "viewbox",
     children: ["rural", "urban"].map(id => ({ id, tag: "g" })),
     draw: drawPopulation

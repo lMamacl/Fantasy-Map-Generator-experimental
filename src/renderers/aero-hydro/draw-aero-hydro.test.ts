@@ -13,6 +13,7 @@ describe("draw-aero-hydro", () => {
     const points: [number, number][] = [];
     const neighbors: number[][] = [];
     const heights = new Uint8Array(n).fill(10);
+    const pressureHPa = new Float32Array(n).fill(1013);
 
     for (let i = 0; i < n; i++) {
       points.push([(i % 10) * 100 + 50, Math.floor(i / 10) * 100 + 50]);
@@ -23,13 +24,21 @@ describe("draw-aero-hydro", () => {
       cellsX: 10,
       cellsY: 10,
       points: points,
+      vertices: {
+        p: points,
+        c: Array.from({ length: n }, () => [0, 1, 2]),
+        v: Array.from({ length: n }, () => [0, 1, 2])
+      },
       cells: {
         i: Array.from({ length: n }, (_, i) => i),
         h: heights,
+        b: new Uint8Array(n).fill(0),
+        v: Array.from({ length: n }, () => [0, 1, 2]),
         windU: new Float32Array(n).fill(5.0),
         windV: new Float32Array(n).fill(0),
         oceanU: new Float32Array(n).fill(2.0),
         oceanV: new Float32Array(n).fill(0),
+        pressureHPa: pressureHPa,
         c: neighbors
       }
     };
@@ -51,6 +60,7 @@ describe("draw-aero-hydro", () => {
 
     document.body.innerHTML = `
       <svg id="viewbox">
+        <g id="pressure"></g>
         <g id="winds"></g>
         <g id="oceanCurrents"></g>
       </svg>
@@ -68,12 +78,21 @@ describe("draw-aero-hydro", () => {
     expect(drawAeroHydro.getSpeedColor(15.0)).toBe("#ef4444");
   });
 
-  it("drawWinds() i removeWinds() renderują i usuwają elementy SVG wiatru oraz centrów barycznych", () => {
+  it("drawPressure() i removePressure() renderują i usuwają izobary oraz centra baryczne", () => {
+    drawAeroHydro.drawPressure();
+
+    const pressureG = document.getElementById("pressure");
+    expect(pressureG?.querySelector("#pressureCentersMarkers")).not.toBeNull();
+
+    drawAeroHydro.removePressure();
+    expect(pressureG?.children.length).toBe(0);
+  });
+
+  it("drawWinds() i removeWinds() renderują i usuwają elementy SVG wstęg wiatru", () => {
     drawAeroHydro.drawWinds();
 
     const windsG = document.getElementById("winds");
     expect(windsG?.querySelector("#windStreamlines")).not.toBeNull();
-    expect(windsG?.querySelector("#baricCentersMarkers")).not.toBeNull();
 
     drawAeroHydro.removeWinds();
     expect(windsG?.children.length).toBe(0);

@@ -40,6 +40,17 @@ const DEFAULT_PRESETS: Record<string, LayerId[]> = {
     "vignette"
   ],
   emblems: ["borders", "burgIcons", "emblems", "ice", "lakes", "rivers", "routes", "scaleBar", "states", "vignette"],
+  climate: [
+    "heightmap",
+    "lakes",
+    "rivers",
+    "pressure",
+    "winds",
+    "oceanCurrents",
+    "flowAnimation",
+    "scaleBar",
+    "vignette"
+  ],
   landmass: ["scaleBar"]
 };
 

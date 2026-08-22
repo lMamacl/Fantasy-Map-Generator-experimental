@@ -35,7 +35,12 @@ export const LAYER_TOGGLES = new Map<LayerId, LayerButton>([
   ["markets", { label: "Markets" }],
   ["trade", { label: "Trade", shortcut: "Backquote", hint: "` (backtick)" }],
   ["precipitation", { label: "Precipit<u>a</u>tion", shortcut: "KeyA" }],
+  ["pressure", { label: "Pressure" }],
+  ["winds", { label: "Winds 2D" }],
+  ["oceanCurrents", { label: "Currents" }],
+  ["flowAnimation", { label: "Flow Particles" }],
   ["population", { label: "Populatio<u>n</u>", shortcut: "KeyN" }],
+
   ["emblems", { label: "Emblems", shortcut: "KeyY" }],
   ["burgIcons", { label: "<u>I</u>cons", shortcut: "KeyI" }],
   ["labels", { label: "<u>L</u>abels", shortcut: "KeyL" }],
