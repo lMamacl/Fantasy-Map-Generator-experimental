@@ -298,6 +298,13 @@ export function traceStreamline(
     const speed2 = Math.sqrt(u2 * u2 + v2 * v2);
     if (speed2 < 0.1) break;
 
+    const angle2 = Math.atan2(v2, u2);
+    if (prevAngle !== null) {
+      let angleDiff2 = Math.abs(angle2 - prevAngle);
+      if (angleDiff2 > Math.PI) angleDiff2 = 2 * Math.PI - angleDiff2;
+      if (angleDiff2 > maxAngleRad) break;
+    }
+
     // Krok finalny RK2
     currX += (u2 / speed2) * stepSize;
     currY += (v2 / speed2) * stepSize;
@@ -307,7 +314,7 @@ export function traceStreamline(
     }
 
     path.push([currX, currY]);
-    prevAngle = Math.atan2(v2, u2);
+    prevAngle = angle2;
   }
 
   return path;

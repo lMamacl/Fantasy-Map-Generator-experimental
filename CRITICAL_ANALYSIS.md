@@ -29,7 +29,7 @@ Agenty otrzymują błędne wskaźówki! Dokumenty mówią "utwórz nowy plik `sr
 - Większość logiki klimatu jest w **jednym dużym pliku `public/main.js`**
 - Przeniesienie do TypeScript wymagałoby **zaraz refaktoryzacji całego pipeline'a**
 
-### Pliki Zmodyfikowane / Utworzone w Pętlach 0, 1, 2, 3 i 4
+### Pliki Zmodyfikowane / Utworzone w Pętlach 0, 1, 2, 3, 4 i 5
 | Plik | Pętla | Status | Opis |
 |------|-------|--------|------|
 | `src/types/aero-hydro.ts` | Pętla 0 | ✅ UTWORZONY | Ścisłe typy pól fizycznych, konfiguracji i ośrodków barycznych |
@@ -44,18 +44,21 @@ Agenty otrzymują błędne wskaźówki! Dokumenty mówią "utwórz nowy plik `sr
 | `src/generators/aero-hydro/moisture-advection-engine.ts` | Pętla 3 | ✅ UTWORZONY | Silnik wilgoci 2D, Clausius-Clapeyron, orografia, Föhn effect |
 | `src/generators/aero-hydro/moisture-advection-engine.test.ts` | Pętla 3 | ✅ UTWORZONY | 10 testów jednostkowych wilgoci i opadów (PASS) |
 | `src/generators/aero-hydro/hydrology-engine.ts` | Pętla 4 | ✅ UTWORZONY | Silnik hydrologii (Priority-Flood, Leopold-Maddock W∝Q^0.5, Strahler) |
-| `src/generators/aero-hydro/hydrology-engine.test.ts` | Pętla 4 | ✅ UTWORZONY | 7 testów jednostkowych hydrologii i geometrii rzek (PASS) |
+| `src/generators/aero-hydro/hydrology-engine.test.ts` | Pętla 4 | ✅ UTWORZONY | 8 testów jednostkowych hydrologii i algebry Strahlera (PASS) |
 | `src/generators/river-generator.ts` | Pętla 4 | ✅ ZWERYFIKOWANY | Generator rzek kompatybilny wstecznie (15 testów PASS) |
-| `src/generators/aero-hydro/index.ts` | Pętle 1-4 | ✅ UTWORZONY | Główny koordynator AeroHydro (Atmo + Ocean + Moisture + Hydro) i bridge |
+| `src/renderers/aero-hydro/streamline-renderer.ts` | Pętla 5 | ✅ UTWORZONY | Agregacja wstęg (4-8 komórek, bufor 2-3 kratek, Bezier/Catmull SVG) |
+| `src/renderers/aero-hydro/streamline-renderer.test.ts` | Pętla 5 | ✅ UTWORZONY | 5 testów jednostkowych renderera wstęg (PASS) |
+| `src/renderers/aero-hydro/canvas-particle-animator.ts` | Pętla 5 | ✅ UTWORZONY | Silnik cząstek Canvas 2D 60 FPS (Wind & Ocean Particles) |
+| `src/renderers/aero-hydro/canvas-particle-animator.test.ts` | Pętla 5 | ✅ UTWORZONY | 5 testów jednostkowych animatora cząstek (PASS) |
+| `src/generators/aero-hydro/index.ts` | Pętle 1-5 | ✅ UTWORZONY | Główny koordynator AeroHydro i eksporter flowFeatures |
 | `src/generators/index.ts` | Pętla 1 | ✅ ZMODYFIKOWANY | Rejestracja modułu ./aero-hydro w barrel file |
 
-### Pliki do Realizacji w Kolejnych Pętlach (5–6)
+### Pliki do Realizacji w Kolejnej Pętli 6
 | Plik | Pętla | Rola |
 |------|-------|------|
-| `src/renderers/aero-hydro/streamline-renderer.ts` | Pętla 5 | Agregacja strzałek (4-8 komórek, separacja 2-3 kratek) |
-| `src/renderers/aero-hydro/canvas-particle-animator.ts` | Pętla 5 | Silnik cząstek Canvas 2D (60 FPS) |
 | `src/controllers/aero-hydro-editor.ts` | Pętla 6 | Edytor centrów barycznych i podglądu |
 | `public/main.js` | Pętla 6 | Podpięcie AeroHydro do głównego pipeline'a |
+
 
 
 ---

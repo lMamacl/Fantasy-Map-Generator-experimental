@@ -7,6 +7,7 @@
  * @module generators/aero-hydro
  */
 
+import { StreamlineRenderer } from "@/renderers/aero-hydro/streamline-renderer";
 import { AtmosphereEngine } from "./atmosphere-engine";
 import { HydrologyEngine } from "./hydrology-engine";
 import { MoistureAdvectionEngine } from "./moisture-advection-engine";
@@ -21,7 +22,7 @@ export class AeroHydroModule {
 
   /**
    * Wykonuje pełny potok fizyczny klimatu i hydrologii.
-   * Sekwencja: AtmosphereEngine → OceanEngine (P2) → MoistureEngine (P3) → HydrologyEngine (P4).
+   * Sekwencja: AtmosphereEngine → OceanEngine (P2) → MoistureEngine (P3) → HydrologyEngine (P4) → StreamlineRenderer (P5).
    */
   generate(): void {
     if (typeof TIME !== "undefined" && TIME) console.time("generateAeroHydro");
@@ -39,6 +40,11 @@ export class AeroHydroModule {
 
     // Pętla 4: Silnik hydrologii i geometrii rzek
     HydrologyEngine.generate();
+
+    // Pętla 5: Agregacja wstęg przepływu (wiatr i prądy morskie)
+    const windStreamlines = StreamlineRenderer.generateStreamlines("wind");
+    const oceanStreamlines = StreamlineRenderer.generateStreamlines("ocean");
+    this.flowFeatures = [...windStreamlines, ...oceanStreamlines];
 
     if (typeof TIME !== "undefined" && TIME) console.timeEnd("generateAeroHydro");
   }
