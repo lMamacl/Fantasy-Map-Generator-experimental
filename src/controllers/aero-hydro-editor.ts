@@ -5,18 +5,27 @@
  *   - Edycję parametrów ośrodków barycznych (wyże, niże, położenie, ciśnienie, promień)
  *     z automatyczną klasyfikacją typu na podstawie wartości ciśnienia (p >= 1013 hPa -> High, p < 1013 hPa -> Low).
  *   - Konfigurację parametrów fizycznych atmosfery, cyrkulacji oceanicznej i wilgoci.
- *   - Przełączanie warstw widoku (Wiatry SVG, Prądy morskie SVG, Animacja cząstek Canvas 60 FPS).
- *   - Automatyczną aktywację podglądu przy wejściu do edytora.
+ *   - Wewnętrzne zarządzanie warstwami wizualizacji w oknie edytora z automatyczną aktywacją po wejściu
+ *     oraz automatycznym wyłączeniem i wyczyszczeniem nakładek po zamknięciu edytora.
  *
  * @module controllers/aero-hydro-editor
  */
 
-import { Layers } from "@/components/layers";
 import { AeroHydro } from "@/generators/aero-hydro";
-import { ParticleAnimator } from "@/renderers/aero-hydro/canvas-particle-animator";
-import { drawOceanCurrents, drawWinds, removeOceanCurrents, removeWinds } from "@/renderers/aero-hydro/draw-aero-hydro";
+import {
+  drawFlowAnimation,
+  drawOceanCurrents,
+  drawWinds,
+  removeFlowAnimation,
+  removeOceanCurrents,
+  removeWinds
+} from "@/renderers/aero-hydro/draw-aero-hydro";
 import type { BaricCenter } from "@/types/aero-hydro";
 import { ensureEl } from "../utils";
+
+let isWindsActive = true;
+let isOceanActive = false;
+let isParticlesActive = false;
 
 function showTip(text: string): void {
   const g = globalThis as any;
@@ -24,6 +33,14 @@ function showTip(text: string): void {
 }
 
 function closeDialog(id: string): void {
+  // Wyłącz i wyczyść podglądy wizualne po wyjściu z edytora
+  removeWinds();
+  removeOceanCurrents();
+  removeFlowAnimation();
+  isWindsActive = false;
+  isOceanActive = false;
+  isParticlesActive = false;
+
   const g = globalThis as any;
   if (typeof g.$ === "function") {
     const el = g.$(`#${id}`);
@@ -34,19 +51,15 @@ function closeDialog(id: string): void {
 }
 
 function open(): void {
+  isWindsActive = true;
+  isOceanActive = false;
+  isParticlesActive = false;
+
   renderDialog();
   updateInputValues();
 
-  // Automatycznie włącz warstwę wiatrów po wejściu do edytora
-  try {
-    if (Layers?.show) {
-      Layers.show("winds");
-    } else {
-      drawWinds();
-    }
-  } catch (_e) {
-    drawWinds();
-  }
+  // Automatycznie włącz i narysuj wiatry po wejściu do edytora
+  drawWinds();
 
   const g = globalThis as any;
   if (typeof g.$ === "function") {
@@ -58,8 +71,8 @@ function open(): void {
         "Recalculate Climate": () => {
           applyChanges();
           AeroHydro.generate();
-          drawWinds();
-          drawOceanCurrents();
+          if (isWindsActive) drawWinds();
+          if (isOceanActive) drawOceanCurrents();
         },
         Close: () => closeDialog("aeroHydroEditor")
       },
@@ -81,6 +94,10 @@ function renderDialog(): void {
 }
 
 function createDialogHtml(): string {
+  const windsPressed = isWindsActive ? "pressed" : "";
+  const oceanPressed = isOceanActive ? "pressed" : "";
+  const particlesPressed = isParticlesActive ? "pressed" : "";
+
   return /* html */ `<div id="aeroHydroEditor" class="dialog stable">
     <div style="display: flex; gap: 1.5em; flex-wrap: wrap;">
       
@@ -98,9 +115,9 @@ function createDialogHtml(): string {
           <legend><b>Visualization & Map Layers</b></legend>
           <div style="display: flex; flex-direction: column; gap: 0.4em;">
             <div style="display: flex; gap: 0.5em; flex-wrap: wrap;">
-              <button id="toggleWindsLayerBtn" class="btn btn-sm" data-tip="Toggle 2D Wind Streamlines & Baric Center Markers on map">Wind & Pressure (SVG)</button>
-              <button id="toggleOceanLayerBtn" class="btn btn-sm" data-tip="Toggle Ocean Current Streamlines on map">Ocean Currents (SVG)</button>
-              <button id="toggleParticlesLayerBtn" class="btn btn-sm" data-tip="Toggle 60 FPS animated flow particles overlay (Canvas 2D)">Flow Particles (Canvas)</button>
+              <button id="toggleWindsLayerBtn" class="btn btn-sm ${windsPressed}" data-tip="Toggle 2D Wind Streamlines & Baric Center Markers on map">Wind & Pressure (SVG)</button>
+              <button id="toggleOceanLayerBtn" class="btn btn-sm ${oceanPressed}" data-tip="Toggle Ocean Current Streamlines on map">Ocean Currents (SVG)</button>
+              <button id="toggleParticlesLayerBtn" class="btn btn-sm ${particlesPressed}" data-tip="Toggle 60 FPS animated flow particles overlay (Canvas 2D)">Flow Particles (Canvas)</button>
             </div>
           </div>
         </fieldset>
@@ -181,7 +198,6 @@ function renderBaricCentersList(): void {
 
   for (let i = 0; i < centers.length; i++) {
     const c = centers[i];
-    // Automatyczna klasyfikacja na podstawie wartości ciśnienia (>= 1013 -> High, < 1013 -> Low)
     const isHigh = c.pressureHPa >= 1013;
     c.type = isHigh ? "high" : "low";
     const badgeColor = isHigh ? "#dc2626" : "#2563eb";
@@ -202,7 +218,7 @@ function renderBaricCentersList(): void {
   html += "</tbody></table>";
   listEl.innerHTML = html;
 
-  // Podepnij live edycję pól ciśnienia, promienia i pozycji
+  // Live edycja pól
   const pressureInputs = listEl.querySelectorAll<HTMLInputElement>(".centerPressureInput");
   pressureInputs.forEach(inp => {
     inp.addEventListener("input", e => {
@@ -217,7 +233,7 @@ function renderBaricCentersList(): void {
         badge.textContent = isHigh ? "H (High)" : "L (Low)";
         badge.style.background = isHigh ? "#dc2626" : "#2563eb";
       }
-      drawWinds();
+      if (isWindsActive) drawWinds();
     });
   });
 
@@ -236,7 +252,7 @@ function renderBaricCentersList(): void {
       const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
       const val = Number((e.currentTarget as HTMLInputElement).value) || 0;
       centers[idx].x = val;
-      drawWinds();
+      if (isWindsActive) drawWinds();
     });
   });
 
@@ -246,18 +262,18 @@ function renderBaricCentersList(): void {
       const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
       const val = Number((e.currentTarget as HTMLInputElement).value) || 0;
       centers[idx].y = val;
-      drawWinds();
+      if (isWindsActive) drawWinds();
     });
   });
 
-  // Podepnij usuwanie
+  // Usuwanie
   const removeButtons = listEl.querySelectorAll(".removeCenterBtn");
   removeButtons.forEach(btn => {
     btn.addEventListener("click", e => {
       const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
       centers.splice(idx, 1);
       renderBaricCentersList();
-      drawWinds();
+      if (isWindsActive) drawWinds();
     });
   });
 }
@@ -270,57 +286,37 @@ function addListeners(): void {
 
   const toggleWindsBtn = document.getElementById("toggleWindsLayerBtn");
   toggleWindsBtn?.addEventListener("click", () => {
-    if (Layers?.toggle) {
-      Layers.toggle("winds");
+    isWindsActive = !isWindsActive;
+    if (isWindsActive) {
+      toggleWindsBtn.classList.add("pressed");
+      drawWinds();
     } else {
-      const g = document.getElementById("winds");
-      if (g && g.children.length > 0) {
-        removeWinds();
-      } else {
-        drawWinds();
-      }
+      toggleWindsBtn.classList.remove("pressed");
+      removeWinds();
     }
   });
 
   const toggleOceanBtn = document.getElementById("toggleOceanLayerBtn");
   toggleOceanBtn?.addEventListener("click", () => {
-    if (Layers?.toggle) {
-      Layers.toggle("oceanCurrents");
+    isOceanActive = !isOceanActive;
+    if (isOceanActive) {
+      toggleOceanBtn.classList.add("pressed");
+      drawOceanCurrents();
     } else {
-      const g = document.getElementById("oceanCurrents");
-      if (g && g.children.length > 0) {
-        removeOceanCurrents();
-      } else {
-        drawOceanCurrents();
-      }
+      toggleOceanBtn.classList.remove("pressed");
+      removeOceanCurrents();
     }
   });
 
   const toggleParticlesBtn = document.getElementById("toggleParticlesLayerBtn");
   toggleParticlesBtn?.addEventListener("click", () => {
-    if (Layers?.toggle) {
-      Layers.toggle("flowAnimation");
+    isParticlesActive = !isParticlesActive;
+    if (isParticlesActive) {
+      toggleParticlesBtn.classList.add("pressed");
+      drawFlowAnimation();
     } else {
-      const isRunning = (ParticleAnimator as any).isRunning;
-      if (isRunning) {
-        ParticleAnimator.stop();
-      } else {
-        let canvas = document.getElementById("aeroHydroParticleCanvas") as HTMLCanvasElement;
-        if (!canvas) {
-          canvas = document.createElement("canvas");
-          canvas.id = "aeroHydroParticleCanvas";
-          canvas.width = (globalThis as any).graphWidth || 1000;
-          canvas.height = (globalThis as any).graphHeight || 1000;
-          canvas.style.position = "absolute";
-          canvas.style.top = "0";
-          canvas.style.left = "0";
-          canvas.style.pointerEvents = "none";
-          canvas.style.zIndex = "10";
-          document.body.appendChild(canvas);
-        }
-        ParticleAnimator.init(canvas);
-        ParticleAnimator.start();
-      }
+      toggleParticlesBtn.classList.remove("pressed");
+      removeFlowAnimation();
     }
   });
 }
@@ -335,7 +331,6 @@ function addCenter(): void {
   const graphWidth = (globalThis as any).graphWidth || 1000;
   const graphHeight = (globalThis as any).graphHeight || 1000;
 
-  // Domyślnie utwórz antycyklon o p = 1030 hPa, użytkownik może edytować p w tabeli co automatycznie zmieni typ
   const newCenter: BaricCenter = {
     x: Math.round(graphWidth * (0.3 + Math.random() * 0.4)),
     y: Math.round(graphHeight * (0.3 + Math.random() * 0.4)),
@@ -347,7 +342,7 @@ function addCenter(): void {
 
   options.atmosphere.baricCenters.push(newCenter);
   renderBaricCentersList();
-  drawWinds();
+  if (isWindsActive) drawWinds();
 }
 
 function applyChanges(): void {
@@ -375,6 +370,7 @@ function applyChanges(): void {
 
 export const AeroHydroEditor = {
   open,
+  closeDialog,
   renderDialog,
   createDialogHtml,
   updateInputValues,

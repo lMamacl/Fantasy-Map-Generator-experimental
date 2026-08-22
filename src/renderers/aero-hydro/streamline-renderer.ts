@@ -9,7 +9,7 @@
  * @module renderers/aero-hydro/streamline-renderer
  */
 
-import { traceStreamline } from "@/utils/grid-math";
+import { findClosestCellFast, getOrCreateSpatialGrid, traceStreamline } from "@/utils/grid-math";
 
 export interface StreamlineFeature {
   id: number;
@@ -199,7 +199,7 @@ export class StreamlineRendererModule {
   }
 
   /**
-   * Oznacza komórki w promieniu buforowym jako zajęte.
+   * Oznacza komórki w promieniu buforowym jako zajęte w czasie O(1).
    */
   private markBufferZone(
     streamlinePts: [number, number][],
@@ -208,58 +208,47 @@ export class StreamlineRendererModule {
     radiusPx: number
   ): void {
     const rSq = radiusPx * radiusPx;
-    const n = allPoints.length;
+    const sGrid = getOrCreateSpatialGrid(allPoints, Math.max(radiusPx, 40));
+    const { cellSize, cols, rows, buckets } = sGrid;
 
     for (let p = 0; p < streamlinePts.length; p++) {
       const [sx, sy] = streamlinePts[p];
-      for (let i = 0; i < n; i++) {
-        if (usedCells[i]) continue;
-        const [cx, cy] = allPoints[i];
-        const distSq = (sx - cx) * (sx - cx) + (sy - cy) * (sy - cy);
-        if (distSq <= rSq) {
-          usedCells[i] = 1;
+      const centerCol = Math.floor(sx / cellSize);
+      const centerRow = Math.floor(sy / cellSize);
+
+      const minR = Math.max(0, centerRow - 1);
+      const maxR = Math.min(rows - 1, centerRow + 1);
+      const minC = Math.max(0, centerCol - 1);
+      const maxC = Math.min(cols - 1, centerCol + 1);
+
+      for (let r = minR; r <= maxR; r++) {
+        for (let c = minC; c <= maxC; c++) {
+          const bucket = buckets[r * cols + c];
+          for (let k = 0; k < bucket.length; k++) {
+            const i = bucket[k];
+            if (usedCells[i]) continue;
+            const [cx, cy] = allPoints[i];
+            const distSq = (sx - cx) * (sx - cx) + (sy - cy) * (sy - cy);
+            if (distSq <= rSq) {
+              usedCells[i] = 1;
+            }
+          }
         }
       }
     }
   }
 
   /**
-   * Znajduje najbliższą komórkę siatki (lokalne przeszukanie sąsiadów z fallbackiem).
+   * Znajduje najbliższą komórkę siatki w czasie O(1).
    */
   private findClosestCell(
     x: number,
     y: number,
     points: [number, number][],
-    hintIdx?: number,
-    neighbors?: number[][]
+    _hintIdx?: number,
+    _neighbors?: number[][]
   ): number {
-    if (hintIdx !== undefined && neighbors?.[hintIdx]) {
-      let best = hintIdx;
-      const [hx, hy] = points[hintIdx];
-      let bestDist = (x - hx) * (x - hx) + (y - hy) * (y - hy);
-      const nb = neighbors[hintIdx];
-      for (let j = 0; j < nb.length; j++) {
-        const [nx, ny] = points[nb[j]];
-        const d = (x - nx) * (x - nx) + (y - ny) * (y - ny);
-        if (d < bestDist) {
-          bestDist = d;
-          best = nb[j];
-        }
-      }
-      return best;
-    }
-
-    let bestIdx = 0;
-    let bestDistSq = Infinity;
-    for (let i = 0; i < points.length; i++) {
-      const [px, py] = points[i];
-      const distSq = (x - px) * (x - px) + (y - py) * (y - py);
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestIdx = i;
-      }
-    }
-    return bestIdx;
+    return findClosestCellFast(x, y, points);
   }
 }
 

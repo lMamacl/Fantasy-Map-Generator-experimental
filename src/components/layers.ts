@@ -1,14 +1,6 @@
 // Global layers registry: owns layers list, order, and svg skeleton
-
-import {
-  drawFlowAnimation,
-  drawOceanCurrents,
-  drawWinds,
-  removeFlowAnimation,
-  removeOceanCurrents,
-  removeWinds
-} from "@/renderers/aero-hydro/draw-aero-hydro";
 import { drawBiomes } from "@/renderers/draw-biomes";
+
 import { drawBorders } from "@/renderers/draw-borders";
 import { drawBurgIcons, removeBurgIcons } from "@/renderers/draw-burg-icons";
 import { drawCells } from "@/renderers/draw-cells";
@@ -357,33 +349,12 @@ const mapLayers = [
     erase: removePrecipitation
   }),
   new Layer({
-    id: "winds",
-    parent: "viewbox",
-    children: ["windStreamlines", "baricCentersMarkers"].map(id => ({ id, tag: "g" })),
-    draw: drawWinds,
-    erase: removeWinds
-  }),
-  new Layer({
-    id: "oceanCurrents",
-    parent: "viewbox",
-    children: ["oceanCurrentStreamlines"].map(id => ({ id, tag: "g" })),
-    draw: drawOceanCurrents,
-    erase: removeOceanCurrents
-  }),
-  new Layer({
-    id: "flowAnimation",
-    parent: "viewbox",
-    keepContent: true,
-    draw: drawFlowAnimation,
-    erase: removeFlowAnimation
-  }),
-  new Layer({
     id: "population",
-
     parent: "viewbox",
     children: ["rural", "urban"].map(id => ({ id, tag: "g" })),
     draw: drawPopulation
   }),
+
   new Layer({
     id: "emblems",
     parent: "viewbox",

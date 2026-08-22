@@ -13,7 +13,6 @@ import type { Layer } from "@/components/layers";
 import { ParticleAnimator } from "@/renderers/aero-hydro/canvas-particle-animator";
 import { StreamlineRenderer } from "@/renderers/aero-hydro/streamline-renderer";
 import type { BaricCenter } from "@/types/aero-hydro";
-import { findEl } from "@/utils/nodeUtils";
 
 /**
  * Dobiera kolor wstęgi na podstawie średniej prędkości przepływu [m/s].
@@ -27,11 +26,24 @@ export function getSpeedColor(speed: number): string {
   return "#ef4444"; // cynober / czerwony
 }
 
+function getOrCreateGroup(id: string): SVGGElement | null {
+  let g = document.getElementById(id) as SVGGElement | null;
+  if (!g) {
+    const parent = document.getElementById("viewbox") || document.getElementById("map");
+    if (parent) {
+      g = document.createElementNS("http://www.w3.org/2000/svg", "g") as SVGGElement;
+      g.id = id;
+      parent.appendChild(g);
+    }
+  }
+  return g;
+}
+
 /**
  * Rysuje wektorowe wstęgi wiatru oraz znaczniki centrów barycznych na warstwie SVG.
  */
 export function drawWinds(layer?: Layer): void {
-  const g = layer ? layer.getEl() : findEl<SVGGElement>("winds");
+  const g = layer ? layer.getEl() : getOrCreateGroup("winds");
   if (!g) return;
 
   g.replaceChildren();
@@ -137,7 +149,7 @@ export function drawWinds(layer?: Layer): void {
 }
 
 export function removeWinds(layer?: Layer): void {
-  const g = layer ? layer.getEl() : findEl<SVGGElement>("winds");
+  const g = layer ? layer.getEl() : document.getElementById("winds");
   if (g) g.replaceChildren();
 }
 
@@ -145,7 +157,7 @@ export function removeWinds(layer?: Layer): void {
  * Rysuje wstęgi cyrkulacji oceanicznej na warstwie SVG.
  */
 export function drawOceanCurrents(layer?: Layer): void {
-  const g = layer ? layer.getEl() : findEl<SVGGElement>("oceanCurrents");
+  const g = layer ? layer.getEl() : getOrCreateGroup("oceanCurrents");
   if (!g) return;
 
   g.replaceChildren();
@@ -192,7 +204,7 @@ export function drawOceanCurrents(layer?: Layer): void {
 }
 
 export function removeOceanCurrents(layer?: Layer): void {
-  const g = layer ? layer.getEl() : findEl<SVGGElement>("oceanCurrents");
+  const g = layer ? layer.getEl() : document.getElementById("oceanCurrents");
   if (g) g.replaceChildren();
 }
 

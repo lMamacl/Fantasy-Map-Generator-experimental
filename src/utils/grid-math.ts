@@ -182,9 +182,98 @@ export function projectTangentToCoast(
   return [u, v];
 }
 
+export interface SpatialGrid {
+  cellSize: number;
+  cols: number;
+  rows: number;
+  buckets: number[][];
+}
+
+let cachedSpatialGrid: SpatialGrid | null = null;
+let cachedPointsRef: [number, number][] | null = null;
+
+export function getOrCreateSpatialGrid(points: [number, number][], cellSize = 60): SpatialGrid {
+  if (cachedSpatialGrid && cachedPointsRef === points && cachedSpatialGrid.cellSize === cellSize) {
+    return cachedSpatialGrid;
+  }
+
+  let maxX = 1000;
+  let maxY = 1000;
+  for (let i = 0; i < points.length; i++) {
+    if (points[i][0] > maxX) maxX = points[i][0];
+    if (points[i][1] > maxY) maxY = points[i][1];
+  }
+
+  const cols = Math.max(1, Math.ceil((maxX + 100) / cellSize));
+  const rows = Math.max(1, Math.ceil((maxY + 100) / cellSize));
+  const total = cols * rows;
+  const buckets: number[][] = Array.from({ length: total }, () => []);
+
+  for (let i = 0; i < points.length; i++) {
+    const [px, py] = points[i];
+    const col = Math.max(0, Math.min(cols - 1, Math.floor(px / cellSize)));
+    const row = Math.max(0, Math.min(rows - 1, Math.floor(py / cellSize)));
+    buckets[row * cols + col].push(i);
+  }
+
+  cachedSpatialGrid = { cellSize, cols, rows, buckets };
+  cachedPointsRef = points;
+  return cachedSpatialGrid;
+}
+
+export function findClosestCellFast(
+  x: number,
+  y: number,
+  points: [number, number][],
+  spatialGrid?: SpatialGrid
+): number {
+  if (!points || points.length === 0) return 0;
+  const grid = spatialGrid || getOrCreateSpatialGrid(points);
+  const { cellSize, cols, rows, buckets } = grid;
+
+  const centerCol = Math.floor(x / cellSize);
+  const centerRow = Math.floor(y / cellSize);
+
+  let bestIdx = 0;
+  let bestDistSq = Infinity;
+
+  const minR = Math.max(0, centerRow - 1);
+  const maxR = Math.min(rows - 1, centerRow + 1);
+  const minC = Math.max(0, centerCol - 1);
+  const maxC = Math.min(cols - 1, centerCol + 1);
+
+  for (let r = minR; r <= maxR; r++) {
+    for (let c = minC; c <= maxC; c++) {
+      const bucket = buckets[r * cols + c];
+      for (let k = 0; k < bucket.length; k++) {
+        const i = bucket[k];
+        const [px, py] = points[i];
+        const d = (x - px) * (x - px) + (y - py) * (y - py);
+        if (d < bestDistSq) {
+          bestDistSq = d;
+          bestIdx = i;
+        }
+      }
+    }
+  }
+
+  if (bestDistSq === Infinity) {
+    for (let i = 0; i < points.length; i++) {
+      const [px, py] = points[i];
+      const d = (x - px) * (x - px) + (y - py) * (y - py);
+      if (d < bestDistSq) {
+        bestDistSq = d;
+        bestIdx = i;
+      }
+    }
+  }
+
+  return bestIdx;
+}
+
 /**
  * Interpoluje wektor prędkości (u, v) w dowolnym punkcie (x, y) mapy
- * z wykorzystaniem ważenia odwrotnością kwadratu odległości.
+ * z wykorzystaniem ważenia odwrotnością kwadratu odległości w otoczeniu $O(1)$.
  *
  * @param x Współrzędna X punktu zapytania
  * @param y Współrzędna Y punktu zapytania
@@ -207,21 +296,38 @@ export function interpolateVector(
   let sumWeight = 0;
   const maxDistSq = searchRadiusPx * searchRadiusPx;
 
-  for (let i = 0; i < points.length; i++) {
-    const [px, py] = points[i];
-    const dx = x - px;
-    const dy = y - py;
-    const distSq = dx * dx + dy * dy;
+  const sGrid = getOrCreateSpatialGrid(points, Math.max(searchRadiusPx, 40));
+  const { cellSize, cols, rows, buckets } = sGrid;
 
-    if (distSq < 1e-4) {
-      return [fieldU[i], fieldV[i]];
-    }
+  const centerCol = Math.floor(x / cellSize);
+  const centerRow = Math.floor(y / cellSize);
 
-    if (distSq < maxDistSq) {
-      const weight = 1 / distSq;
-      sumU += fieldU[i] * weight;
-      sumV += fieldV[i] * weight;
-      sumWeight += weight;
+  const minR = Math.max(0, centerRow - 1);
+  const maxR = Math.min(rows - 1, centerRow + 1);
+  const minC = Math.max(0, centerCol - 1);
+  const maxC = Math.min(cols - 1, centerCol + 1);
+
+  for (let r = minR; r <= maxR; r++) {
+    for (let c = minC; c <= maxC; c++) {
+      const bucket = buckets[r * cols + c];
+      for (let k = 0; k < bucket.length; k++) {
+        const i = bucket[k];
+        const [px, py] = points[i];
+        const dx = x - px;
+        const dy = y - py;
+        const distSq = dx * dx + dy * dy;
+
+        if (distSq < 1e-4) {
+          return [fieldU[i], fieldV[i]];
+        }
+
+        if (distSq < maxDistSq) {
+          const weight = 1 / distSq;
+          sumU += fieldU[i] * weight;
+          sumV += fieldV[i] * weight;
+          sumWeight += weight;
+        }
+      }
     }
   }
 

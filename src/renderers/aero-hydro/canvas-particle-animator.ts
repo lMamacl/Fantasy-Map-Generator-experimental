@@ -8,6 +8,8 @@
  * @module renderers/aero-hydro/canvas-particle-animator
  */
 
+import { findClosestCellFast } from "@/utils/grid-math";
+
 export interface Particle {
   x: number;
   y: number;
@@ -225,20 +227,10 @@ export class CanvasParticleAnimator {
   }
 
   /**
-   * Znajduje najbliższą komórkę siatki.
+   * Znajduje najbliższą komórkę siatki w czasie O(1).
    */
   private findClosestCell(x: number, y: number, points: [number, number][]): number {
-    let bestIdx = 0;
-    let bestDistSq = Infinity;
-    for (let i = 0; i < points.length; i++) {
-      const [px, py] = points[i];
-      const distSq = (x - px) * (x - px) + (y - py) * (y - py);
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestIdx = i;
-      }
-    }
-    return bestIdx;
+    return findClosestCellFast(x, y, points);
   }
 
   /**
