@@ -712,13 +712,14 @@ function calculateMapCoordinates() {
 // aero-hydro physical climate, atmosphere, ocean circulation and hydrology model
 function generateAeroHydro() {
   TIME && console.time("generateAeroHydro");
-  if (typeof window.generateAeroHydro === "function") {
-    window.generateAeroHydro();
-  } else if (window.Generators?.AeroHydro) {
+  if (window.AeroHydro?.generate) {
+    window.AeroHydro.generate();
+  } else if (window.Generators?.AeroHydro?.generate) {
     window.Generators.AeroHydro.generate();
   }
   TIME && console.timeEnd("generateAeroHydro");
 }
+
 
 // temperature model, trying to follow real-world data
 

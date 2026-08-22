@@ -52,17 +52,11 @@ export class AeroHydroModule {
 
 export const AeroHydro = new AeroHydroModule();
 
-/**
- * Rejestracja globalnego bridge'a dla klasycznego pipeline'u FMG.
- * Wywoływane tylko w przeglądarce.
- */
-function registerBridge(): void {
-  if (typeof window === "undefined") return;
-  const w = window as any;
-  if (!w.AeroHydro) {
-    w.AeroHydro = AeroHydro;
-    w.generateAeroHydro = () => AeroHydro.generate();
-  }
+declare global {
+  // biome-ignore lint/suspicious/noRedeclare: exposed on window for legacy JS
+  var AeroHydro: AeroHydroModule;
 }
 
-registerBridge();
+if (typeof window !== "undefined") {
+  window.AeroHydro = AeroHydro;
+}

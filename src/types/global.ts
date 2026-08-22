@@ -113,12 +113,8 @@ declare global {
   var generatePrecipitation: () => void;
   // Aero-Hydro 2.0 globals
   var generateAeroHydro: () => void;
-  var AeroHydro: {
-    generate: () => void;
-    flowFeatures?: any[];
-    [key: string]: any;
-  };
   var changeViewMode: (event?: Event) => void;
+
   var resetZoom: (duration?: number) => void;
   var RgbQuant: any; // external RgbQuant image-quantization lib
 
