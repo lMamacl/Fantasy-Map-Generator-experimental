@@ -8,6 +8,7 @@
  */
 
 import { AtmosphereEngine } from "./atmosphere-engine";
+import { HydrologyEngine } from "./hydrology-engine";
 import { MoistureAdvectionEngine } from "./moisture-advection-engine";
 import { OceanEngine } from "./ocean-engine";
 
@@ -36,7 +37,8 @@ export class AeroHydroModule {
     // Pętla 3: Silnik termodynamiki wilgoci i opadów 2D
     MoistureAdvectionEngine.generate();
 
-    // Pętla 4: HydrologyEngine.generate()
+    // Pętla 4: Silnik hydrologii i geometrii rzek
+    HydrologyEngine.generate();
 
     if (typeof TIME !== "undefined" && TIME) console.timeEnd("generateAeroHydro");
   }
