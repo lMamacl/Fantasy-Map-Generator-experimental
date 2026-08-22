@@ -97,25 +97,27 @@ export class HydrologyEngineModule {
     const channelWidthM = new Float32Array(n);
     const channelDepthM = new Float32Array(n);
 
-    // Wyznacz rzędowość Strahlera w porządku od góry do dołu
-    const inflowOrders: Map<number, number[]> = new Map();
+    // Zbuduj mapę indeksów komórek wpływających (inflow sources)
+    const inflowSources: Map<number, number[]> = new Map();
     for (let k = 0; k < landIndices.length; k++) {
       const i = landIndices[k];
       const target = flowDirection[i];
       if (target !== -1) {
-        if (!inflowOrders.has(target)) inflowOrders.set(target, []);
-        inflowOrders.get(target)!.push(strahlerOrder[i]);
+        if (!inflowSources.has(target)) inflowSources.set(target, []);
+        inflowSources.get(target)!.push(i);
       }
     }
 
-    for (let k = landIndices.length - 1; k >= 0; k--) {
+    // Iteracja od GÓRY do DOŁU (od najwyższych źródeł do ujścia)
+    // Zapewnia, że rzędy dopływów są już obliczone w momencie przetwarzania węzła docelowego
+    for (let k = 0; k < landIndices.length; k++) {
       const i = landIndices[k];
-      const inflows = inflowOrders.get(i);
-      if (inflows && inflows.length > 0) {
+      const sources = inflowSources.get(i);
+      if (sources && sources.length > 0) {
         let maxOrder = 1;
         let countMax = 0;
-        for (let j = 0; j < inflows.length; j++) {
-          const o = inflows[j];
+        for (let j = 0; j < sources.length; j++) {
+          const o = strahlerOrder[sources[j]];
           if (o > maxOrder) {
             maxOrder = o;
             countMax = 1;

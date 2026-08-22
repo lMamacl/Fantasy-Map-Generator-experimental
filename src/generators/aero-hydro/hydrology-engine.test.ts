@@ -41,8 +41,8 @@ describe("HydrologyEngine", () => {
         neighbors.push(nb);
 
         if (x >= 5) {
-          // Ląd o opadającym profilu
-          heights[idx] = 20 + Math.round((x - 5) * 4); // h = 20..76
+          // Ląd z wyraźną doliną rzeczną zbiegającą się w osi y=7 (nachylenie zboczy > spadek podłużny)
+          heights[idx] = 20 + Math.round((x - 5) * 2) + Math.abs(y - 7) * 5;
           cellsT[idx] = 1;
         }
       }
@@ -102,14 +102,83 @@ describe("HydrologyEngine", () => {
     }
   });
 
-  it("rzędowość Strahlera: źródła mają rząd 1, a zbiegi cieków wyższy rząd", () => {
+  it("rzędowość Strahlera: źródła mają rząd 1, a zbiegi cieków osiągają wyższe rzędy (>= 2)", () => {
     const { nodes } = hydrologyEngine.generate();
 
-    // Każdy węzeł ma prawidłowy rząd (1..n)
+    let maxOrder = 1;
     for (const node of nodes) {
       expect(node.strahlerOrder).toBeGreaterThanOrEqual(1);
       expect(Number.isInteger(node.strahlerOrder)).toBe(true);
+      if (node.strahlerOrder > maxOrder) {
+        maxOrder = node.strahlerOrder;
+      }
     }
+
+    // W dorzeczu o wielu dopływach maksymalny rząd Strahlera na ujściu musi osiągnąć >= 2
+    expect(maxOrder).toBeGreaterThanOrEqual(2);
+  });
+
+  it("algebra Strahlera: zbieg dwóch cieków rzędu k tworzy rząd k+1", () => {
+    // Topologia drzewiasta z ujściem do oceanu (komórka 7, h = 10):
+    // 4 źródła: (0, 1) -> 2 (rząd 2), (3, 4) -> 5 (rząd 2), (2, 5) -> 6 (rząd 3) -> 7 (ocean)
+    const customH = new Float32Array([80, 80, 50, 80, 80, 50, 30, 10]);
+    const customPrec = new Uint8Array([50, 50, 50, 50, 50, 50, 50, 50]);
+    const customC = [
+      [2], // 0 (A, h=80) -> 2
+      [2], // 1 (B, h=80) -> 2
+      [0, 1, 6], // 2 (C, h=50) -> 6
+      [5], // 3 (D, h=80) -> 5
+      [5], // 4 (E, h=80) -> 5
+      [3, 4, 6], // 5 (F, h=50) -> 6
+      [2, 5, 7], // 6 (G, h=30) -> 7
+      [6] // 7 (Ocean, h=10)
+    ];
+
+    (globalThis as any).grid = {
+      cellsX: 8,
+      cellsY: 1,
+      spacing: 50,
+      points: [
+        [0, 0],
+        [1, 0],
+        [2, 0],
+        [3, 0],
+        [4, 0],
+        [5, 0],
+        [6, 0],
+        [7, 0]
+      ],
+      cells: {
+        i: [0, 1, 2, 3, 4, 5, 6, 7],
+        h: customH,
+        t: new Int8Array([1, 1, 1, 1, 1, 1, 1, -1]),
+        c: customC,
+        prec: customPrec,
+        fl: new Uint16Array(8)
+      }
+    };
+
+    const { nodes } = hydrologyEngine.generate();
+    const nodeA = nodes.find((n: any) => n.cell === 0);
+    const nodeB = nodes.find((n: any) => n.cell === 1);
+    const nodeC = nodes.find((n: any) => n.cell === 2);
+    const nodeD = nodes.find((n: any) => n.cell === 3);
+    const nodeE = nodes.find((n: any) => n.cell === 4);
+    const nodeF = nodes.find((n: any) => n.cell === 5);
+    const nodeG = nodes.find((n: any) => n.cell === 6);
+
+    // Źródła mają rząd 1
+    expect(nodeA.strahlerOrder).toBe(1);
+    expect(nodeB.strahlerOrder).toBe(1);
+    expect(nodeD.strahlerOrder).toBe(1);
+    expect(nodeE.strahlerOrder).toBe(1);
+
+    // Konfluencja 1 + 1 -> rząd 2
+    expect(nodeC.strahlerOrder).toBe(2);
+    expect(nodeF.strahlerOrder).toBe(2);
+
+    // Konfluencja 2 + 2 -> rząd 3
+    expect(nodeG.strahlerOrder).toBe(3);
   });
 
   it("brak NaN i Infinity we wszystkich polach hydrodynamicznych", () => {
