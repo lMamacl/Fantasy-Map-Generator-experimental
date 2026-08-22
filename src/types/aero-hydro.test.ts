@@ -88,12 +88,16 @@ describe("AeroHydro type definitions", () => {
     expect(config.westernIntensification).toBeLessThan(5);
   });
 
-  it("MoistureConfig default ma dodatnie parametry", () => {
+  it("MoistureConfig default ma dodatnie i zbalansowane parametry fizyczne", () => {
     const config = defaultMoistureConfig();
     expect(config.minPrecipMmYr).toBeGreaterThan(0);
     expect(config.advectionPasses).toBeGreaterThan(0);
     expect(config.advectionPasses).toBeLessThanOrEqual(20);
     expect(config.diffusionCoeff).toBeGreaterThan(0);
     expect(config.diffusionCoeff).toBeLessThanOrEqual(1);
+    expect(config.advectionRate).toBeGreaterThan(0);
+    expect(config.orographicCondensationRate).toBeGreaterThan(0);
+    expect(config.baseRainoutRate).toBeGreaterThan(0);
+    expect(config.foehnHeatingRate).toBeGreaterThan(0);
   });
 });

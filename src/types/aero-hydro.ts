@@ -95,8 +95,8 @@ export function defaultOceanCurrentsConfig(): OceanCurrentsConfig {
 }
 
 /**
- * Konfiguracja adwekcji wilgoci.
- * Model Clausiusa-Clapeyrona z multi-pass adwekcją 2D.
+ * Konfiguracja adwekcji wilgoci i termodynamiki opadów.
+ * Model Clausiusa-Clapeyrona z multi-pass adwekcją 2D, orografią i efektem fenu.
  */
 export interface MoistureConfig {
   /** Minimalne opady bazowe w mm/rok — nawet pustynie mają > 0 */
@@ -105,23 +105,26 @@ export interface MoistureConfig {
   advectionPasses: number;
   /** Współczynnik dyfuzji atmosferycznej wygładzającej gradienty */
   diffusionCoeff: number;
-  /** Ułamek wymiany masy wilgoci w jednym kroku adwekcji (0.2–0.8, domyślnie 0.6) */
+  /** Współczynnik wymiany masy w adwekcji upwind (0.1–0.9, domyślnie 0.6) */
   advectionRate?: number;
-  /** Wydajność kondensacji orograficznej przy wznoszeniu mas powietrza (0.4–0.9, domyślnie 0.75) */
-  orographicEfficiency?: number;
-  /** Stopa naturalnego opadu bazowego z kolumny wilgoci (0.02–0.15, domyślnie 0.08) */
+  /** Wydajność kondensacji orograficznej przy wznoszeniu (0.1–1.0, domyślnie 0.75) */
+  orographicCondensationRate?: number;
+  /** Naturalny ubytek opadowy w kolumnie powietrza (0.01–0.3, domyślnie 0.08) */
   baseRainoutRate?: number;
+  /** Ogrzewanie fenowe po zawietrznej (°C na jednostkę spadku terenu, domyślnie 0.35) */
+  foehnHeatingRate?: number;
 }
 
-/** Domyślne wartości domyślne dla MoistureConfig */
+/** Domyślne wartości dla MoistureConfig */
 export function defaultMoistureConfig(): MoistureConfig {
   return {
     minPrecipMmYr: 10,
     advectionPasses: 4,
     diffusionCoeff: 0.15,
     advectionRate: 0.6,
-    orographicEfficiency: 0.75,
-    baseRainoutRate: 0.08
+    orographicCondensationRate: 0.75,
+    baseRainoutRate: 0.08,
+    foehnHeatingRate: 0.35
   };
 }
 

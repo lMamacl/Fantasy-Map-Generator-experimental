@@ -3,12 +3,12 @@
  *
  * Modeluje:
  *   1. Równanie nasycenia Clausiusa-Clapeyrona e_s(T).
- *   2. Parowanie z oceanu modulowane anomalią SST (ciepłe prądy parują mocniej).
- *   3. Wieloprzebiegową adwekcję wilgoci 2D wzdłuż wektora wiatru.
- *   4. Orograficzne wymuszenie opadów po stronie nawietrznej gór (ochładzanie wilgotnoadiabatyczne)
- *      oraz cień opadowy z efektem fenu (ogrzewanie suchoadiabatyczne) po stronie zawietrznej.
- *   5. Dyfuzję atmosferyczną zapobiegającą nienaturalnym ścianom opadów.
- *   6. Gwarantowane opady minimalne (brak martwych stref na pustyniach).
+ *   2. Parowanie z oceanu modulowane anomalią SST (ciepłe prądy parują mocniej) oraz prędkością wiatru.
+ *   3. Wieloprzebiegową adwekcję wilgoci 2D wzdłuż wektora wiatru (multi-pass upwind).
+ *   4. Orograficzne wymuszenie opadów po stronie nawietrznej gór (adiabatic cooling & rainout).
+ *   5. Ogrzewanie fenowe i cień opadowy po stronie zawietrznej (Föhn effect / adiabatic compression).
+ *   6. Dyfuzję atmosferyczną zapobiegającą nienaturalnym ścianom opadów.
+ *   7. Gwarantowane opady minimalne (brak martwych stref na pustyniach).
  *
  * Zapisuje wynik do `grid.cells.prec` (Uint8Array, 0–255) oraz `grid.cells.moisture` (Float32Array).
  *
@@ -36,10 +36,6 @@ export class MoistureAdvectionEngineModule {
       ...(customConfig || {})
     };
 
-    const advectionRate = config.advectionRate ?? 0.6;
-    const orographicEfficiency = config.orographicEfficiency ?? 0.75;
-    const baseRainoutRate = config.baseRainoutRate ?? 0.08;
-
     const n = grid.cells.i.length;
     const { cells, points } = grid;
 
@@ -54,12 +50,26 @@ export class MoistureAdvectionEngineModule {
     const { moisture, prec, windU, windV, sstAnomaly, temp, h } = cells;
     const isWater = (i: number) => h[i] < 20;
 
+    // Pobierz temperaturę komórki z bezpiecznym fallbackiem
+    const getTemp = (i: number): number => {
+      if (temp && typeof temp[i] === "number" && Number.isFinite(temp[i])) {
+        return temp[i];
+      }
+      return 15; // standardowy fallback (15°C)
+    };
+
+    // Parametry konfiguracyjne ze stałymi fizycznymi
+    const advectionRate = config.advectionRate ?? 0.6;
+    const orographicRate = config.orographicCondensationRate ?? 0.75;
+    const baseRainoutRate = config.baseRainoutRate ?? 0.08;
+    const foehnHeatingRate = config.foehnHeatingRate ?? 0.35;
+
     // Tymczasowy bufor opadów w wartościach ciągłych (mm/rok)
     const rawPrecip = new Float32Array(n);
 
     // 2. Krok I: Inicjalizacja wilgoci nad oceanami (Parowanie oparte na Clausiusie-Clapeyronie i SST)
     for (let i = 0; i < n; i++) {
-      const baseTemp = temp ? temp[i] : 15;
+      const baseTemp = getTemp(i);
       const sst = sstAnomaly ? sstAnomaly[i] : 0;
       const effectiveTemp = isWater(i) ? baseTemp + sst : baseTemp;
 
@@ -67,7 +77,7 @@ export class MoistureAdvectionEngineModule {
 
       if (isWater(i)) {
         // Ocean dostarcza wilgoć nasyconą do atmosfery
-        // Ciepłe prądy zwiększają parowanie
+        // Prędkość wiatru zwiększa turbulencyjne parowanie
         const windSpeed = Math.hypot(windU ? windU[i] : 0, windV ? windV[i] : 0);
         const windEvapBonus = 1 + Math.min(windSpeed * 0.03, 0.5);
         moisture[i] = satVaporCapacity * windEvapBonus;
@@ -114,67 +124,62 @@ export class MoistureAdvectionEngineModule {
           }
         }
 
-        // Zmieszaj wilgoć z napływającej masy powietrza (skalowane prędkością wiatru)
+        // Zmieszaj wilgoć z napływającej masy powietrza
         if (upwindWeightSum > 0) {
           const advected = upwindMoistureSum / upwindWeightSum;
-          const fluxRate = Math.min(0.9, advectionRate * (1 + windSpeed * 0.05));
-          moisture[i] = moisture[i] * (1 - fluxRate) + advected * fluxRate;
+          moisture[i] = moisture[i] * (1 - advectionRate) + advected * advectionRate;
         }
 
-        // Jeśli komórka to ląd, powietrze napotykające wzniesienie ulega orograficznej kondensacji
+        // Fizyka lądowa: orografia, kondensacja i efekt Fenu
         if (!isWater(i)) {
-          const cellTemp = temp ? temp[i] : 15;
+          const cellTemp = getTemp(i);
+          const currentSat = this.clausiusClapeyron(cellTemp);
 
-          // Wymuszenie orograficzne: wznoszenie terenu wzdłuż wektora wiatru
+          // Wymuszenie orograficzne: nachylenie terenu wzdłuż wektora wiatru
           const [dhx, dhy] = scalarGradient(h, i, points, cells.c);
           const slopeAscent = (u * dhx + v * dhy) / Math.max(windSpeed, 0.1);
 
           let condensation = 0;
-          let foehnDrying = 1.0;
-
           if (slopeAscent > 0) {
-            // NAWIETRZNA: Wiatr wieje pod górę — ochładzanie adiabatyczne obniża próg nasycenia
-            const adiabaticCooling = slopeAscent * 0.4;
+            // Nawietrzna strona (Wznoszenie): ochładzanie wilgotnoadiabatyczne (~6.5°C/km)
+            const adiabaticCooling = slopeAscent * 3.5;
             const cooledSat = this.clausiusClapeyron(cellTemp - adiabaticCooling);
             if (moisture[i] > cooledSat) {
-              condensation = (moisture[i] - cooledSat) * orographicEfficiency;
+              condensation = (moisture[i] - cooledSat) * orographicRate;
             }
-          } else if (slopeAscent < 0) {
-            // ZAWIETRZNA (EFEKT FENU): Wiatr opada w dół stoku — kompresja i ogrzewanie suchoadiabatyczne
-            const foehnWarming = Math.abs(slopeAscent) * 0.5;
+          } else if (slopeAscent < -0.1) {
+            // Zawietrzna strona (Efekt Fenu): ogrzewanie suchoadiabatyczne (~10°C/km)
+            const foehnWarming = Math.abs(slopeAscent) * foehnHeatingRate * 4.0;
             const warmedSat = this.clausiusClapeyron(cellTemp + foehnWarming);
-            // Wyższa pojemność nasycenia drastycznie tłumi kondensację i deszcz
+            // W podgrzanym powietrzu brak kondensacji, a wilgotność względna spada
+            condensation = 0;
             if (moisture[i] > warmedSat) {
               condensation = (moisture[i] - warmedSat) * 0.2;
             }
-            // Zmniejszenie opadu bazowego w cieniu fenowym
-            foehnDrying = 0.3;
-          } else {
-            // PŁASKI TEREN: Zwykłe przesycenie (deszcz frontalny)
-            const currentSat = this.clausiusClapeyron(cellTemp);
-            if (moisture[i] > currentSat) {
-              condensation = (moisture[i] - currentSat) * 0.5;
-            }
+          } else if (moisture[i] > currentSat) {
+            // Zwykłe przesycenie frontalne
+            condensation = (moisture[i] - currentSat) * 0.5;
           }
 
-          // Naturalny ubytek wilgoci w atmosferze (opad bazowy modulowany fenem)
-          const baseRainout = moisture[i] * baseRainoutRate * foehnDrying;
+          // Naturalny ubytek wilgoci w kolumnie powietrza (opad bazowy)
+          // Po zawietrznej stronie efekt Fenu tłumi ubytek bazowy
+          const rainoutFactor = slopeAscent < -0.2 ? baseRainoutRate * 0.3 : baseRainoutRate;
+          const baseRainout = moisture[i] * rainoutFactor;
           const totalRain = Math.max(condensation + baseRainout, 0);
 
           rawPrecip[i] += totalRain;
           moisture[i] = Math.max(moisture[i] - totalRain, 0);
         } else {
-          // Nad wodą wilgoć jest natychmiast uzupełniana przez parowanie
-          const seaTemp = (temp ? temp[i] : 15) + (sstAnomaly ? sstAnomaly[i] : 0);
+          // Nad wodą wilgoć jest stale uzupełniana przez parowanie
+          const seaTemp = getTemp(i) + (sstAnomaly ? sstAnomaly[i] : 0);
           const seaSat = this.clausiusClapeyron(seaTemp);
           moisture[i] = Math.max(moisture[i], seaSat * 0.9);
-          // Niewielki opad nad oceanem
           rawPrecip[i] += seaSat * 0.04;
         }
       }
     }
 
-    // 4. Krok III: Dyfuzja atmosferyczna (wygładzenie gradientów i eliminacja ścian opadów)
+    // 4. Krok III: Dyfuzja atmosferyczna (wygładzenie gradientów i eliminacja nienaturalnych ścian)
     if (config.diffusionCoeff > 0) {
       laplacianSmooth(rawPrecip, cells.c, config.diffusionCoeff, 2);
     }
@@ -188,7 +193,7 @@ export class MoistureAdvectionEngineModule {
     for (let i = 0; i < n; i++) {
       let rainMm = rawPrecip[i];
 
-      // Gwarantowane minimum na lądzie (brak martwych pustyń o zerowych opadach)
+      // Gwarantowane minimum na lądzie (brak martwych 0-pustyń)
       if (!isWater(i)) {
         rainMm = Math.max(rainMm, config.minPrecipMmYr * 0.05);
       }

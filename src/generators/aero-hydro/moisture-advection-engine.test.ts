@@ -26,12 +26,15 @@ describe("MoistureAdvectionEngine", () => {
     const heights = new Uint8Array(n).fill(10); // Ocean po lewej
     const cellsT = new Int8Array(n).fill(-3);
 
-    // Utwórz konfigurację: Ocean po lewej (x: 0..9), Ląd po prawej (x: 10..29)
-    // Pasmo górskie w kolumnach 14–16 (h = 80)
+    // Utwórz konfigurację siatki:
+    // - Ocean po lewej (x: 0..9)
+    // - Wybrzeże i nizina (x: 10..13, h = 30)
+    // - Pasmo górskie (x: 14..16, h = 85)
+    // - Zawietrzna nizina / cień opadowy (x: 17..29, h = 30)
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++) {
         const idx = y * cols + x;
-        // P0 FIX: dodawanie pojedynczej pary [x, y] do tablicy points
+        // P0 FIX: Dodajemy tablicę współrzędnych [x, y], a nie płaskie argumenty
         points.push([x * spacing + 16, y * 30 + 15]);
 
         const nb: number[] = [];
@@ -45,16 +48,11 @@ describe("MoistureAdvectionEngine", () => {
           heights[idx] = 30; // nizina
           cellsT[idx] = 1;
         }
-        if (x >= 11 && x <= 13 && y >= 3 && y <= 16) {
-          heights[idx] = 80; // pasmo górskie przybrzeżne
+        if (x >= 12 && x <= 14 && y >= 3 && y <= 16) {
+          heights[idx] = 85; // pasmo górskie (w zasięgu wiatru od oceanu x=10)
         }
       }
     }
-
-    const windU = new Float32Array(n).fill(5.0); // Wiatr wiejący na wschód (5 m/s)
-    const windV = new Float32Array(n).fill(0);
-    const sstAnomaly = new Float32Array(n).fill(0);
-    const temp = new Float32Array(n).fill(20); // P0 FIX: Float32Array
 
     (globalThis as any).grid = {
       cellsX: cols,
@@ -66,23 +64,36 @@ describe("MoistureAdvectionEngine", () => {
         h: heights,
         t: cellsT,
         c: neighbors,
-        temp: temp,
-        windU: windU,
-        windV: windV,
-        sstAnomaly: sstAnomaly,
-        b: new Uint8Array(n)
+        temp: new Float32Array(n).fill(20), // P0 FIX: Float32Array zamiast Int8Array
+        b: new Uint8Array(n),
+        windU: new Float32Array(n).fill(6.0), // Domyślny wiatr ze składową U > 0 (na wschód)
+        windV: new Float32Array(n).fill(0),
+        sstAnomaly: new Float32Array(n).fill(0)
       }
     };
 
     (globalThis as any).options = {
       prec: 100,
+      atmosphere: {
+        zonalPressureHPa: [1008, 1024, 996, 1028],
+        baricCenters: [],
+        frictionAngleOcean: 20,
+        frictionAngleLand: 35,
+        coriolisFloor: 1e-5
+      },
+      oceanCurrents: {
+        windStressFactor: 0.03,
+        ekmanAngle: 30,
+        westernIntensification: 2.2
+      },
       moistureAdvection: {
         minPrecipMmYr: 10,
         advectionPasses: 4,
-        diffusionCoeff: 0.15,
+        diffusionCoeff: 0.1,
         advectionRate: 0.6,
-        orographicEfficiency: 0.75,
-        baseRainoutRate: 0.08
+        orographicCondensationRate: 0.75,
+        baseRainoutRate: 0.08,
+        foehnHeatingRate: 0.35
       }
     };
 
@@ -122,22 +133,36 @@ describe("MoistureAdvectionEngine", () => {
     }
   });
 
-  it("efekt orograficzny i cień opadowy (Föhn effect): nawietrzna strona ma znacznie wyższe opady niż zawietrzna", () => {
+  it("efekt orograficzny i cień Fenu: nawietrzna ma istotnie wyższe opady niż zawietrzna", () => {
     const { windU, windV } = (globalThis as any).grid.cells;
-    windU.fill(8.0); // silny wiatr z zachodu na wschód (prosto w góry)
+    windU.fill(8.0); // 8 m/s z zachodu na wschód (z oceanu w góry)
     windV.fill(0);
 
     moistureEngine.generate();
     const { prec } = (globalThis as any).grid.cells;
 
-    // Nawietrzny stok górski (x = 11, y = 10), gdzie wilgotny wiatr z oceanu wspina się na pasmo
-    const windwardIdx = 10 * 30 + 11;
-    // Zawietrzna komórka (x = 18, y = 10) za grzbietem w cieniu opadowym (efekt Fenu)
-    const leewardIdx = 10 * 30 + 18;
+    // Nawietrzny stok pasma górskiego (x = 12, y = 10), gdzie wysokość rośnie z 30 do 85
+    const windwardIdx = 10 * 30 + 12;
+    // Zawietrzna nizina w cieniu opadowym (x = 16, y = 10)
+    const leewardIdx = 10 * 30 + 16;
 
     expect(prec[windwardIdx]).toBeGreaterThan(prec[leewardIdx]);
-    // Opad po stronie nawietrznej powinien być co najmniej 1.5x wyższy niż w cieniu
-    expect(prec[windwardIdx] / Math.max(prec[leewardIdx], 1)).toBeGreaterThan(1.5);
+    // Weryfikacja ilościowa: opad na stoku nawietrznym jest co najmniej 1.5x większy niż w cieniu
+    expect(prec[windwardIdx]).toBeGreaterThan(prec[leewardIdx] * 1.5);
+  });
+
+  it("efekt Fenu redukuje wilgotność powietrza po zawietrznej stronie pasma", () => {
+    const { windU, windV } = (globalThis as any).grid.cells;
+    windU.fill(8.0);
+    windV.fill(0);
+
+    moistureEngine.generate();
+    const { moisture } = (globalThis as any).grid.cells;
+
+    const coastIdx = 10 * 30 + 11; // wilgotne wybrzeże
+    const leewardIdx = 10 * 30 + 19; // sucha strona zawietrzna
+
+    expect(moisture[coastIdx]).toBeGreaterThan(moisture[leewardIdx]);
   });
 
   it("anomalia SST zwiększa parowanie i wilgoć docierającą do wybrzeża", () => {
@@ -176,6 +201,13 @@ describe("MoistureAdvectionEngine", () => {
       expect(prec[i]).toBeGreaterThanOrEqual(0);
       expect(prec[i]).toBeLessThanOrEqual(255);
     }
+  });
+
+  it("obsługuje brak temp fallbackując bezpiecznie do 15°C", () => {
+    (globalThis as any).grid.cells.temp = undefined;
+    expect(() => moistureEngine.generate()).not.toThrow();
+    const { prec } = (globalThis as any).grid.cells;
+    expect(prec[10 * 30 + 10]).toBeGreaterThan(0);
   });
 
   it("wydajność: obliczenia silnika wilgoci trwają < 35ms", () => {
