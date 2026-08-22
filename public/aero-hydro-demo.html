@@ -1,0 +1,1532 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aero-Hydro 2.0 — Zoptymalizowana Symulacja Geofizyczna (60 FPS)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="libs/delaunator.min.js"></script>
+  <style>
+    :root {
+      --bg-dark: #040711;
+      --panel-bg: rgba(13, 20, 38, 0.88);
+      --panel-border: rgba(255, 255, 255, 0.12);
+      --accent-cyan: #06b6d4;
+      --accent-blue: #3b82f6;
+      --accent-emerald: #10b981;
+      --accent-gold: #f59e0b;
+      --accent-rose: #f43f5e;
+      --accent-purple: #a855f7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --font-ui: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: var(--font-ui);
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #app-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #map-viewport {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background: #02050e;
+      cursor: crosshair;
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    #svg-layer {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    #interactive-layer {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: auto;
+    }
+
+    /* PRESSURE TOKENS */
+    .pressure-token {
+      position: absolute;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      cursor: grab;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 24px rgba(0, 0, 0, 0.7), inset 0 0 8px rgba(255, 255, 255, 0.4);
+      transition: transform 0.15s ease, box-shadow 0.2s ease;
+      z-index: 40;
+    }
+
+    .pressure-token:active {
+      cursor: grabbing;
+      transform: translate(-50%, -50%) scale(1.15);
+    }
+
+    .token-high {
+      background: radial-gradient(circle at 35% 35%, #60a5fa, #1d4ed8);
+      border: 2px solid #bfdbfe;
+      color: #ffffff;
+      box-shadow: 0 0 24px rgba(59, 130, 246, 0.75);
+    }
+
+    .token-high::after {
+      content: '';
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 1px dashed rgba(96, 165, 250, 0.6);
+      animation: rotate-cw 12s linear infinite;
+    }
+
+    .token-low {
+      background: radial-gradient(circle at 35% 35%, #fb7185, #be123c);
+      border: 2px solid #fecdd3;
+      color: #ffffff;
+      box-shadow: 0 0 24px rgba(244, 63, 94, 0.75);
+    }
+
+    .token-low::after {
+      content: '';
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 1px dashed rgba(251, 113, 133, 0.6);
+      animation: rotate-ccw 10s linear infinite;
+    }
+
+    .token-label {
+      position: absolute;
+      bottom: -24px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(15, 23, 42, 0.95);
+      padding: 2px 7px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    @keyframes rotate-cw {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes rotate-ccw {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(-360deg); }
+    }
+
+    /* GLASS PANEL */
+    .glass-panel {
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    }
+
+    #editor-window {
+      position: absolute;
+      top: 18px;
+      left: 18px;
+      width: 420px;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+      padding: 18px 20px;
+      animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 10px;
+    }
+
+    .panel-title {
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge-fmg {
+      background: linear-gradient(135deg, #06b6d4, #3b82f6);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 6px;
+      color: white;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 6px;
+    }
+
+    .action-btn {
+      flex: 1;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-family: var(--font-ui);
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-add-high {
+      background: rgba(59, 130, 246, 0.18);
+      border-color: rgba(59, 130, 246, 0.4);
+      color: #93c5fd;
+    }
+    .btn-add-high:hover {
+      background: rgba(59, 130, 246, 0.35);
+      color: #fff;
+    }
+
+    .btn-add-low {
+      background: rgba(244, 63, 94, 0.18);
+      border-color: rgba(244, 63, 94, 0.4);
+      color: #fca5a5;
+    }
+    .btn-add-low:hover {
+      background: rgba(244, 63, 94, 0.35);
+      color: #fff;
+    }
+
+    .btn-regen {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.35);
+      color: #6ee7b7;
+    }
+    .btn-regen:hover {
+      background: rgba(16, 185, 129, 0.3);
+      color: #fff;
+    }
+
+    /* COLORED LAYER TOGGLES */
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    .chips-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .toggle-chip {
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: 11.5px;
+      font-weight: 500;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .toggle-chip .chip-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .toggle-chip.active {
+      color: #fff;
+      border-color: currentColor;
+    }
+
+    .toggle-chip[data-layer="terrain"].active {
+      color: #34d399;
+      background: rgba(52, 211, 153, 0.15);
+    }
+
+    .toggle-chip[data-layer="grid"].active {
+      color: #cbd5e1;
+      background: rgba(203, 213, 225, 0.15);
+    }
+
+    .toggle-chip[data-layer="wind"].active {
+      color: var(--accent-cyan);
+      background: rgba(6, 182, 212, 0.16);
+    }
+
+    .toggle-chip[data-layer="ocean"].active {
+      color: var(--accent-gold);
+      background: rgba(245, 158, 11, 0.16);
+    }
+
+    .toggle-chip[data-layer="isobars"].active {
+      color: var(--accent-purple);
+      background: rgba(168, 85, 247, 0.16);
+    }
+
+    .toggle-chip[data-layer="precip"].active {
+      color: var(--accent-blue);
+      background: rgba(59, 130, 246, 0.16);
+    }
+
+    .toggle-chip[data-layer="rivers"].active {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.16);
+    }
+
+    .toggle-chip[data-layer="soil"].active {
+      color: #a3e635;
+      background: rgba(163, 230, 53, 0.16);
+    }
+
+    .toggle-chip[data-layer="particles"].active {
+      color: #f472b6;
+      background: rgba(244, 114, 182, 0.16);
+      grid-column: span 2;
+    }
+
+    /* HUD */
+    #hud-bar {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      padding: 10px 16px;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .hud-stat {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .hud-stat span:last-child {
+      color: var(--text-main);
+      font-weight: 600;
+    }
+
+    /* LEGEND */
+    #velocity-legend {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 16px;
+      z-index: 50;
+      width: 250px;
+    }
+
+    .legend-title {
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-main);
+    }
+
+    .legend-gradient {
+      height: 6px;
+      border-radius: 3px;
+      background: linear-gradient(to right, #0284c7, #06b6d4, #10b981, #facc15, #ef4444);
+      margin-bottom: 4px;
+    }
+
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    /* MODAL */
+    #token-modal {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 320px;
+      z-index: 100;
+      padding: 18px;
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 90;
+      display: none;
+    }
+
+    .control-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .control-row label {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .control-row input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent-cyan);
+      cursor: pointer;
+    }
+
+    .btn-apply {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: white;
+      border: none;
+      padding: 9px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .hint-box {
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.4;
+      border-left: 3px solid var(--accent-cyan);
+    }
+  </style>
+</head>
+<body>
+  <div id="app-container">
+    <div id="map-viewport">
+      <canvas id="terrain-canvas"></canvas>
+      <canvas id="precip-canvas"></canvas>
+      <canvas id="soil-canvas"></canvas>
+      <canvas id="grid-canvas"></canvas>
+      <canvas id="particles-canvas"></canvas>
+      <svg id="svg-layer">
+        <defs>
+          <filter id="glow-filter" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="2.5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+        <g id="svg-isobars"></g>
+        <g id="svg-ocean-ribbons"></g>
+        <g id="svg-wind-streamlines"></g>
+        <g id="svg-rivers"></g>
+      </svg>
+      <div id="interactive-layer"></div>
+    </div>
+
+    <!-- UI FLOATING PANEL -->
+    <div id="editor-window" class="glass-panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>🌪️ Aero-Hydro 2.0 (Ultra 60 FPS)</span>
+          <span class="badge-fmg">High Performance</span>
+        </div>
+      </div>
+
+      <div class="hint-box">
+        🌍 <strong>Fizyka Voronoi w 60 FPS:</strong> Gradienty FVM, Pasata/Monsuny, Pętle Gyre, Adwekcja wilgoci z orograficznym cieniem deszczowym, Rzeki Leopolda i Oazy nadrzeczne.
+      </div>
+
+      <div class="control-row">
+        <span class="section-label">Ośrodki Baryczne i Rzeźba Terenu</span>
+        <div class="btn-group">
+          <button id="btn-add-high" class="action-btn btn-add-high">+ Wyż (H)</button>
+          <button id="btn-add-low" class="action-btn btn-add-low">+ Niż (L)</button>
+          <button id="btn-regen" class="action-btn btn-regen">🎲 Nowy Teren</button>
+        </div>
+      </div>
+
+      <div class="control-row">
+        <span class="section-label">Warstwy Fizyczne i Prezentacja</span>
+        <div class="chips-grid">
+          <button class="toggle-chip active" data-layer="terrain">
+            <span class="chip-dot"></span> 🏔️ Teren / Hipsometria
+          </button>
+          <button class="toggle-chip active" data-layer="grid">
+            <span class="chip-dot"></span> 🔳 Komórki Voronoi
+          </button>
+          <button class="toggle-chip active" data-layer="wind">
+            <span class="chip-dot"></span> 💨 Wstęgi Wiatru 2D
+          </button>
+          <button class="toggle-chip active" data-layer="ocean">
+            <span class="chip-dot"></span> 🌊 Prądy Morskie (Gyres)
+          </button>
+          <button class="toggle-chip active" data-layer="isobars">
+            <span class="chip-dot"></span> 🧭 Izobary (hPa)
+          </button>
+          <button class="toggle-chip active" data-layer="precip">
+            <span class="chip-dot"></span> 🌧️ Opady / Deszcz Orograf.
+          </button>
+          <button class="toggle-chip active" data-layer="rivers">
+            <span class="chip-dot"></span> 🏞️ Rzeki Leopolda-Maddocka
+          </button>
+          <button class="toggle-chip active" data-layer="soil">
+            <span class="chip-dot"></span> 🌿 Wilgoć Glebowa (Oazy)
+          </button>
+          <button class="toggle-chip active" data-layer="particles">
+            <span class="chip-dot"></span> ✨ Cząstki 60 FPS (Smugi)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud-bar" class="glass-panel">
+      <div class="hud-stat">
+        <span>KOMÓRKI VORONOI</span>
+        <span id="hud-cells" style="color: #38bdf8;">4 500</span>
+      </div>
+      <div class="hud-stat">
+        <span>FPS</span>
+        <span id="hud-fps" style="color: #10b981;">60</span>
+      </div>
+      <div class="hud-stat">
+        <span>CZAS FIZYKI (FVM)</span>
+        <span id="hud-calc-time" style="color: #facc15;">2.9 ms</span>
+      </div>
+    </div>
+
+    <!-- LEGEND -->
+    <div id="velocity-legend" class="glass-panel">
+      <div class="legend-title">
+        <span>Prędkość Przepływu |V|</span>
+        <span style="color: #facc15;">m/s</span>
+      </div>
+      <div class="legend-gradient"></div>
+      <div class="legend-labels">
+        <span>0.0</span>
+        <span>4.0</span>
+        <span>8.0</span>
+        <span>14.0</span>
+        <span>22.0+</span>
+      </div>
+    </div>
+
+    <!-- DOUBLE CLICK MODAL -->
+    <div id="modal-backdrop" class="modal-backdrop"></div>
+    <div id="token-modal" class="glass-panel">
+      <div class="panel-header">
+        <div class="panel-title" id="modal-token-title">Inspektor Ośrodka</div>
+        <button class="action-btn" id="modal-close-btn" style="flex:0; width:28px;">✕</button>
+      </div>
+      <div class="control-row">
+        <label><span>Ciśnienie Centralne:</span> <strong id="val-pressure">1028 hPa</strong></label>
+        <input type="range" id="input-pressure" min="960" max="1040" value="1025" />
+      </div>
+      <div class="control-row">
+        <label><span>Promień Wpływu:</span> <strong id="val-radius">450 km</strong></label>
+        <input type="range" id="input-radius" min="150" max="1000" value="450" />
+      </div>
+      <button class="btn-apply" id="modal-save-btn">Zatwierdź Zmiany</button>
+    </div>
+  </div>
+
+  <script>
+    // --- 1. GEOMETRIA VORONOI & SPATIAL HASH DLA O(1) LOOKUP ---
+    function buildVoronoiDiagram(points, width, height) {
+      const flatPoints = new Float64Array(points.length * 2);
+      for (let i = 0; i < points.length; i++) {
+        flatPoints[i * 2] = points[i][0];
+        flatPoints[i * 2 + 1] = points[i][1];
+      }
+
+      const delaunay = new Delaunator(flatPoints);
+      const cellsCount = points.length;
+      const polygons = new Array(cellsCount);
+      const neighbors = new Array(cellsCount);
+      for (let i = 0; i < cellsCount; i++) neighbors[i] = [];
+
+      for (let e = 0; e < delaunay.triangles.length; e++) {
+        const p = delaunay.triangles[e];
+        const nextEdge = (e % 3 === 2) ? e - 2 : e + 1;
+        const neighborPoint = delaunay.triangles[nextEdge];
+        if (neighbors[p].indexOf(neighborPoint) === -1) neighbors[p].push(neighborPoint);
+        if (neighbors[neighborPoint].indexOf(p) === -1) neighbors[neighborPoint].push(p);
+      }
+
+      for (let i = 0; i < cellsCount; i++) {
+        const [px, py] = points[i];
+        const neigh = neighbors[i];
+        const sorted = [];
+        for (const n of neigh) {
+          const [nx, ny] = points[n];
+          const mx = (px + nx) * 0.5;
+          const my = (py + ny) * 0.5;
+          const angle = Math.atan2(my - py, mx - px);
+          sorted.push({ x: mx, y: my, angle });
+        }
+        sorted.sort((a, b) => a.angle - b.angle);
+        const poly = sorted.map(s => [s.x, s.y]);
+        polygons[i] = poly.length > 2 ? poly : [[px-10, py-10], [px+10, py-10], [px+10, py+10], [px-10, py+10]];
+      }
+
+      return { polygons, neighbors };
+    }
+
+    // --- STAN SYMULACJI (Zero-Allocation Layout) ---
+    const state = {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      grid: null,
+      spatialGrid: null,  // Szybka tablica O(1) dla cząstek 60 FPS
+      spatialCols: 0,
+      spatialRows: 0,
+      spatialCellSize: 22,
+      heights: null,      // Uint8Array
+      pressure: null,     // Float32Array (hPa)
+      windU: null,        // Float32Array (m/s)
+      windV: null,        // Float32Array (m/s)
+      windSpeed: null,    // Float32Array
+      oceanU: null,       // Float32Array (m/s)
+      oceanV: null,       // Float32Array (m/s)
+      oceanSpeed: null,   // Float32Array
+      sstAnomaly: null,   // Float32Array (°C)
+      moisture: null,     // Float32Array (g/kg)
+      precip: null,       // Float32Array (mm)
+      soilMoisture: null, // Float32Array (mm)
+      riverFlow: null,    // Float32Array (m³/s)
+      riverNext: null,    // Int32Array (downstream cell)
+      strahler: null,     // Uint8Array (order 1..8)
+      centers: [
+        { id: 1, type: 'H', x: window.innerWidth * 0.25, y: window.innerHeight * 0.28, pressure: 1030, radius: 420 },
+        { id: 2, type: 'L', x: window.innerWidth * 0.75, y: window.innerHeight * 0.35, pressure: 988, radius: 390 },
+        { id: 3, type: 'H', x: window.innerWidth * 0.50, y: window.innerHeight * 0.82, pressure: 1026, radius: 360 }
+      ],
+      selectedToken: null,
+      layers: {
+        terrain: true,
+        grid: true,
+        wind: true,
+        ocean: true,
+        isobars: true,
+        precip: true,
+        rivers: true,
+        soil: true,
+        particles: true
+      },
+      particles: [],
+      maxParticles: 3200
+    };
+
+    const terrainCanvas = document.getElementById('terrain-canvas');
+    const terrainCtx = terrainCanvas.getContext('2d');
+    const precipCanvas = document.getElementById('precip-canvas');
+    const precipCtx = precipCanvas.getContext('2d');
+    const soilCanvas = document.getElementById('soil-canvas');
+    const soilCtx = soilCanvas.getContext('2d');
+    const gridCanvas = document.getElementById('grid-canvas');
+    const gridCtx = gridCanvas.getContext('2d');
+    const particlesCanvas = document.getElementById('particles-canvas');
+    const particlesCtx = particlesCanvas.getContext('2d');
+    const interactiveLayer = document.getElementById('interactive-layer');
+
+    function resize() {
+      state.width = window.innerWidth;
+      state.height = window.innerHeight;
+      terrainCanvas.width = state.width;
+      terrainCanvas.height = state.height;
+      precipCanvas.width = state.width;
+      precipCanvas.height = state.height;
+      soilCanvas.width = state.width;
+      soilCanvas.height = state.height;
+      gridCanvas.width = state.width;
+      gridCanvas.height = state.height;
+      particlesCanvas.width = state.width;
+      particlesCanvas.height = state.height;
+
+      generateFmgVoronoiGrid();
+      generateFmgHeightmap();
+      recalcPhysics();
+    }
+    window.addEventListener('resize', resize);
+
+    // --- 2. GENEROWANIE SIATKI VORONOI & SPATIAL HASH O(1) ---
+    function generateFmgVoronoiGrid() {
+      const spacing = 22; // ~4500 komórek
+      const nx = Math.ceil(state.width / spacing);
+      const ny = Math.ceil(state.height / spacing);
+      const points = [];
+
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+          const jitterX = (Math.random() - 0.5) * spacing * 0.85;
+          const jitterY = (Math.random() - 0.5) * spacing * 0.85;
+          points.push([
+            Math.max(4, Math.min(state.width - 4, (i + 0.5) * spacing + jitterX)),
+            Math.max(4, Math.min(state.height - 4, (j + 0.5) * spacing + jitterY))
+          ]);
+        }
+      }
+
+      const { polygons, neighbors } = buildVoronoiDiagram(points, state.width, state.height);
+      const cellsCount = points.length;
+
+      // Budowanie Spatial Hash Grid dla O(1) lookup w pętli animacji
+      state.spatialCellSize = spacing;
+      state.spatialCols = Math.ceil(state.width / spacing);
+      state.spatialRows = Math.ceil(state.height / spacing);
+      state.spatialGrid = new Int32Array(state.spatialCols * state.spatialRows).fill(0);
+
+      for (let i = 0; i < cellsCount; i++) {
+        const [px, py] = points[i];
+        const gx = Math.min(state.spatialCols - 1, Math.max(0, Math.floor(px / spacing)));
+        const gy = Math.min(state.spatialRows - 1, Math.max(0, Math.floor(py / spacing)));
+        state.spatialGrid[gy * state.spatialCols + gx] = i;
+      }
+
+      state.grid = { points, cellsCount, polygons, neighbors, spacing };
+      document.getElementById('hud-cells').textContent = cellsCount.toLocaleString();
+
+      // Alokacja buforów
+      state.heights = new Uint8Array(cellsCount);
+      state.pressure = new Float32Array(cellsCount);
+      state.windU = new Float32Array(cellsCount);
+      state.windV = new Float32Array(cellsCount);
+      state.windSpeed = new Float32Array(cellsCount);
+      state.oceanU = new Float32Array(cellsCount);
+      state.oceanV = new Float32Array(cellsCount);
+      state.oceanSpeed = new Float32Array(cellsCount);
+      state.sstAnomaly = new Float32Array(cellsCount);
+      state.moisture = new Float32Array(cellsCount);
+      state.precip = new Float32Array(cellsCount);
+      state.soilMoisture = new Float32Array(cellsCount);
+      state.riverFlow = new Float32Array(cellsCount);
+      state.riverNext = new Int32Array(cellsCount).fill(-1);
+      state.strahler = new Uint8Array(cellsCount).fill(1);
+    }
+
+    // --- 3. GENEROWANIE RZEŹBY TERENU ---
+    function generateFmgHeightmap() {
+      const { points, cellsCount } = state.grid;
+      const seed = Math.random() * 500;
+
+      for (let i = 0; i < cellsCount; i++) {
+        const [x, y] = points[i];
+        const nx = (x / state.width) * 3.4;
+        const ny = (y / state.height) * 3.4;
+
+        const d1 = Math.sin(nx + seed) * Math.cos(ny + seed * 0.85);
+        const d2 = Math.sin(nx * 2.3 - ny) * 0.4;
+        const distFromCenter = Math.hypot(x - state.width*0.5, y - state.height*0.5) / (state.width*0.48);
+
+        let elevation = (d1 + d2 + (1.2 - distFromCenter)) * 44;
+
+        // Cieśnina
+        const straitDist = Math.hypot(x - state.width * 0.5, y - state.height * 0.5);
+        if (straitDist < 60) elevation = Math.min(elevation, 14);
+
+        // Pasmo górskie (Bariera orograficzna)
+        const mountainRidge = Math.abs(x - state.width * 0.36 - Math.sin(y * 0.015) * 80);
+        if (mountainRidge < 80 && y > state.height * 0.15 && y < state.height * 0.85) {
+          elevation += (1 - mountainRidge / 80) * 58;
+        }
+
+        state.heights[i] = Math.max(5, Math.min(96, Math.round(elevation)));
+      }
+    }
+
+    // --- 4. PEŁNY POTOK FIZYCZNY AERO-HYDRO ---
+    function recalcPhysics() {
+      const t0 = performance.now();
+      const { points, neighbors, cellsCount } = state.grid;
+
+      // KROK 1: CIŚNIENIE BARYCZNE P(x,y)
+      for (let i = 0; i < cellsCount; i++) {
+        const [x, y] = points[i];
+        const latNorm = (y / state.height) * 2 - 1;
+        const phi = (latNorm * Math.PI) / 2;
+
+        let p = 1013.25 - 6 * Math.cos(3 * phi) + 14 * Math.cos(2 * phi) - 18 * Math.sin(phi)**2;
+
+        const isLand = state.heights[i] >= 20;
+        if (isLand && Math.abs(latNorm) < 0.5) p -= 5.5; // Niż monsunowy
+
+        for (const c of state.centers) {
+          const dist = Math.hypot(x - c.x, y - c.y);
+          if (dist < c.radius * 2) {
+            const factor = Math.exp(-(dist * dist) / (c.radius * c.radius));
+            p += (c.pressure - 1013.25) * factor;
+          }
+        }
+        state.pressure[i] = p;
+      }
+
+      // KROK 2: WIATR GEOSTROFICZNY 2D (GREEN-GAUSS FVM & FROUDE OROGRAFIA)
+      for (let i = 0; i < cellsCount; i++) {
+        const [x, y] = points[i];
+        const neigh = neighbors[i];
+        const p_i = state.pressure[i];
+        const h_i = state.heights[i];
+
+        let gradX = 0, gradY = 0;
+        for (const k of neigh) {
+          const [nx, ny] = points[k];
+          const dx = nx - x, dy = ny - y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const dp = state.pressure[k] - p_i;
+          gradX += (dp * dx) / dist;
+          gradY += (dp * dy) / dist;
+        }
+        gradX /= (neigh.length || 1);
+        gradY /= (neigh.length || 1);
+
+        const latSign = (y < state.height * 0.5) ? 1 : -1;
+        const isLand = h_i >= 20;
+        const friction = isLand ? 0.32 : 0.12;
+
+        let u = -gradY * 48 * latSign + gradX * (friction * 24);
+        let v =  gradX * 48 * latSign + gradY * (friction * 24);
+
+        if (h_i >= 70) {
+          const alongY = (v > 0 ? 1 : -1) * Math.hypot(u, v) * 0.65;
+          u *= 0.35;
+          v = alongY;
+        }
+
+        const spd = Math.hypot(u, v);
+        state.windU[i] = u;
+        state.windV[i] = v;
+        state.windSpeed[i] = spd;
+      }
+
+      // KROK 3: CYRKULACJA OCEANICZNA & GYRES
+      for (let i = 0; i < cellsCount; i++) {
+        const [x, y] = points[i];
+        const h_i = state.heights[i];
+
+        if (h_i < 20) {
+          let ou = state.windU[i] * 0.85;
+          let ov = state.windV[i] * 0.85;
+          const latSign = (y < state.height * 0.5) ? 1 : -1;
+          const ekmanU = ou * 0.7 - ov * 0.3 * latSign;
+          const ekmanV = ou * 0.3 * latSign + ov * 0.7;
+
+          const isWestCoast = (x > state.width * 0.35 && x < state.width * 0.55);
+          if (isWestCoast) {
+            ou *= 1.4;
+            ov *= 1.4;
+          }
+
+          const oSpeed = Math.hypot(ekmanU, ekmanV);
+          state.oceanU[i] = ekmanU;
+          state.oceanV[i] = ekmanV;
+          state.oceanSpeed[i] = oSpeed;
+
+          const flowTowardsPole = (y < state.height * 0.5 && ekmanV < 0) || (y >= state.height * 0.5 && ekmanV > 0);
+          state.sstAnomaly[i] = flowTowardsPole ? Math.min(5.0, oSpeed * 0.6) : -Math.min(4.0, oSpeed * 0.5);
+        } else {
+          state.oceanU[i] = 0; state.oceanV[i] = 0; state.oceanSpeed[i] = 0; state.sstAnomaly[i] = 0;
+        }
+      }
+
+      // KROK 4: MAKROKLIMAT: PŁYNNA ADWEKCJA WILGOCI (ADVECTION-DIFFUSION) I CIĄGŁE OPADY
+      // Inicjalizacja parowania oceanicznego
+      for (let i = 0; i < cellsCount; i++) {
+        const [x, y] = points[i];
+        const latNorm = (y / state.height) * 2 - 1; // -1 (N) do +1 (S)
+
+        if (state.heights[i] < 20) {
+          const sst = state.sstAnomaly[i];
+          const tropicalMoisture = Math.max(0, 1 - Math.abs(latNorm) * 1.1) * 20;
+          state.moisture[i] = Math.max(45, 75 + sst * 6 + tropicalMoisture + state.oceanSpeed[i] * 3);
+        } else {
+          state.moisture[i] = 40; // Ląd startuje z naturalną wilgotnością tła
+        }
+        state.precip[i] = 0;
+      }
+
+      // 6 Iteracji gładkiej adwekcji i dyfuzji makroskopowej (Advection-Diffusion)
+      const nextMoisture = new Float32Array(cellsCount);
+
+      for (let pass = 0; pass < 6; pass++) {
+        for (let i = 0; i < cellsCount; i++) {
+          if (state.heights[i] < 20) {
+            nextMoisture[i] = state.moisture[i];
+            continue;
+          }
+
+          const [x, y] = points[i];
+          const u = state.windU[i], v = state.windV[i];
+          const spd = state.windSpeed[i] || 1;
+          const neigh = neighbors[i];
+
+          let totalWeight = 0;
+          let weightedMoisture = 0;
+
+          for (const k of neigh) {
+            const [nx, ny] = points[k];
+            const dx = x - nx, dy = y - ny;
+            const dist = Math.hypot(dx, dy) || 1;
+
+            // Rzutowanie wektora wiatru (waga znoszenia mas powietrza)
+            const windProjection = (u * dx + v * dy) / (spd * dist);
+            // Waga dyfuzji + waga adwekcji pod wiatr (zapewnia brak dziur i ciągłość pola)
+            const weight = Math.max(0.18, 0.4 + windProjection * 0.6);
+
+            weightedMoisture += state.moisture[k] * weight;
+            totalWeight += weight;
+          }
+
+          let q = totalWeight > 0 ? (weightedMoisture / totalWeight) : state.moisture[i];
+
+          // Stopniowe kontynentalne zużycie wilgoci w głąb lądu (tylko 3-5% na komórkę)
+          const h_i = state.heights[i];
+          const continentalDecay = 0.965 - Math.max(0, (h_i - 20) * 0.002);
+          nextMoisture[i] = Math.max(15, q * continentalDecay);
+        }
+
+        // Kopiowanie bufora
+        for (let i = 0; i < cellsCount; i++) {
+          state.moisture[i] = nextMoisture[i];
+        }
+      }
+
+      // Wyliczanie ciągłego pola opadów dla wszystkich komórek lądu
+      for (let i = 0; i < cellsCount; i++) {
+        if (state.heights[i] >= 20) {
+          const q = state.moisture[i];
+          const h_i = state.heights[i];
+          const p_i = state.pressure[i];
+
+          // Składowe: opad bazowy + wzmocnienie niżowe + wznoszenie hipsometryczne
+          const cycloneBoost = Math.max(0, (1016 - p_i) / 16);
+          const orographicBoost = Math.max(0, (h_i - 20) / 70);
+
+          const rain = q * (0.62 + cycloneBoost * 0.35 + orographicBoost * 0.30);
+          state.precip[i] = Math.min(100, Math.max(8, Math.round(rain)));
+        } else {
+          state.precip[i] = 0;
+        }
+      }
+
+      // KROK 5: HYDROLOGIA RZECZNA LEOPOLDA-MADDOCKA & OAZY GLEBOWE
+      state.riverFlow.fill(0);
+      state.riverNext.fill(-1);
+      state.strahler.fill(1);
+
+      // Wyznaczanie kierunku spływu grawitacyjnego (do najniższego sąsiada)
+      for (let i = 0; i < cellsCount; i++) {
+        if (state.heights[i] < 20) continue; // Tylko ląd generuje rzeki
+        const neigh = neighbors[i];
+        let lowest = i;
+        let minH = state.heights[i];
+
+        for (const k of neigh) {
+          if (state.heights[k] < minH) {
+            minH = state.heights[k];
+            lowest = k;
+          }
+        }
+        if (lowest !== i) state.riverNext[i] = lowest;
+      }
+
+      // Akumulacja przepływu Q (od najwyższych szczytów w dół)
+      const sortedCells = Array.from({ length: cellsCount }, (_, i) => i)
+        .sort((a, b) => state.heights[b] - state.heights[a]);
+
+      for (const i of sortedCells) {
+        if (state.heights[i] < 20) continue;
+        state.riverFlow[i] += state.precip[i] * 9; // Przepływ zebrany z deszczu
+        const next = state.riverNext[i];
+        if (next !== -1) {
+          state.riverFlow[next] += state.riverFlow[i];
+          if (state.riverFlow[i] > 180) {
+            state.strahler[next] = Math.max(state.strahler[next], state.strahler[i] + 1);
+          }
+        }
+      }
+
+      // Wilgotność glebowa (Oazy nadrzeczne w suchych strefach - Efekt Doliny Nilu)
+      for (let i = 0; i < cellsCount; i++) {
+        if (state.heights[i] >= 20) {
+          // Oaza powstaje gdy duża rzeka (Q >= 500) płynie przez suchy teren (precip < 30)
+          if (state.riverFlow[i] >= 500 && state.precip[i] < 30) {
+            state.soilMoisture[i] = Math.min(100, Math.sqrt(state.riverFlow[i]) * 2.6);
+          } else {
+            state.soilMoisture[i] = 0;
+          }
+        } else {
+          state.soilMoisture[i] = 0;
+        }
+      }
+
+      const calcTime = (performance.now() - t0).toFixed(1);
+      document.getElementById('hud-calc-time').textContent = `${calcTime} ms`;
+
+      renderAllLayers();
+    }
+
+    // --- 5. ULTRA-WYDAJNE RENDEROWANIE WARSTW Z TWARDYMI MASKAMI ---
+    function renderAllLayers() {
+      renderTerrainLayer();
+      renderPrecipitationLayer();
+      renderSoilLayer();
+      renderGridLayer();
+      renderIsobars();
+      renderRiversLayer();
+      renderStreamlines();
+      renderTokens();
+    }
+
+    function renderTerrainLayer() {
+      terrainCtx.clearRect(0, 0, state.width, state.height);
+      if (!state.layers.terrain) return;
+
+      const { polygons, cellsCount } = state.grid;
+
+      for (let i = 0; i < cellsCount; i++) {
+        const poly = polygons[i];
+        if (!poly || poly.length < 3) continue;
+
+        const h = state.heights[i];
+        terrainCtx.beginPath();
+        terrainCtx.moveTo(poly[0][0], poly[0][1]);
+        for (let j = 1; j < poly.length; j++) terrainCtx.lineTo(poly[j][0], poly[j][1]);
+        terrainCtx.closePath();
+
+        if (h < 20) {
+          const depth = h / 20;
+          terrainCtx.fillStyle = `rgb(${Math.round(6 + depth * 14)}, ${Math.round(20 + depth * 32)}, ${Math.round(48 + depth * 55)})`;
+        } else if (h < 45) {
+          terrainCtx.fillStyle = '#1c382b'; // Niziny
+        } else if (h < 70) {
+          terrainCtx.fillStyle = '#4a2a12'; // Wyżyny
+        } else {
+          terrainCtx.fillStyle = '#cbd5e1'; // Szczyty
+        }
+        terrainCtx.fill();
+      }
+    }
+
+    // PŁYNNE RENDEROWANIE CIĄGŁEGO POLA OPADÓW NA CANVAS (ZERO DZIUR I PRZESKOKÓW)
+    function renderPrecipitationLayer() {
+      precipCtx.clearRect(0, 0, state.width, state.height);
+      if (!state.layers.precip) return;
+
+      const { polygons, cellsCount } = state.grid;
+
+      for (let i = 0; i < cellsCount; i++) {
+        if (state.heights[i] < 20) continue; // Tylko ląd
+
+        const poly = polygons[i];
+        if (!poly || poly.length < 3) continue;
+
+        const prec = state.precip[i];
+
+        precipCtx.beginPath();
+        precipCtx.moveTo(poly[0][0], poly[0][1]);
+        for (let j = 1; j < poly.length; j++) precipCtx.lineTo(poly[j][0], poly[j][1]);
+        precipCtx.closePath();
+
+        // Gładka, ciągła skala barw klimatycznych (brak przeskoków i pustych dziur)
+        if (prec < 25) {
+          // Strefa sucha / półsucha (wnętrze lądu, cień opadowy)
+          const a = 0.12 + (prec / 25) * 0.18;
+          precipCtx.fillStyle = `rgba(217, 119, 6, ${a.toFixed(2)})`; // Ciepły bursztyn suszy
+        } else if (prec < 48) {
+          // Strefa umiarkowanych opadów (niziny i równiny lądowe)
+          const a = 0.30 + ((prec - 25) / 23) * 0.25;
+          precipCtx.fillStyle = `rgba(6, 182, 212, ${a.toFixed(2)})`; // Świeży błękit
+        } else if (prec < 75) {
+          // Strefa wilgotna / fronty deszczowe i niże
+          const a = 0.55 + ((prec - 48) / 27) * 0.25;
+          precipCtx.fillStyle = `rgba(59, 130, 246, ${a.toFixed(2)})`; // Królewski błękit
+        } else {
+          // Strefa ulewna / orografia i głębokie cyklony
+          const a = 0.78 + Math.min(0.20, ((prec - 75) / 25) * 0.20);
+          precipCtx.fillStyle = `rgba(99, 102, 241, ${a.toFixed(2)})`; // Głęboki indygo/fiolet
+        }
+        precipCtx.fill();
+      }
+    }
+
+    // OAZY I ZIELONE DOLINY NADRZECZNE (TYLKO LĄD)
+    function renderSoilLayer() {
+      soilCtx.clearRect(0, 0, state.width, state.height);
+      if (!state.layers.soil) return;
+
+      const { polygons, cellsCount } = state.grid;
+
+      for (let i = 0; i < cellsCount; i++) {
+        if (state.heights[i] < 20) continue; // Tylko ląd
+        const soil = state.soilMoisture[i];
+        if (soil < 20) continue;
+
+        const poly = polygons[i];
+        if (!poly || poly.length < 3) continue;
+
+        soilCtx.beginPath();
+        soilCtx.moveTo(poly[0][0], poly[0][1]);
+        for (let j = 1; j < poly.length; j++) soilCtx.lineTo(poly[j][0], poly[j][1]);
+        soilCtx.closePath();
+
+        const greenAlpha = Math.min(0.65, (soil / 100) * 0.7);
+        soilCtx.fillStyle = `rgba(52, 211, 153, ${greenAlpha.toFixed(2)})`;
+        soilCtx.fill();
+      }
+    }
+
+    function renderGridLayer() {
+      gridCtx.clearRect(0, 0, state.width, state.height);
+      if (!state.layers.grid) return;
+
+      const { polygons, cellsCount } = state.grid;
+      gridCtx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+      gridCtx.lineWidth = 0.7;
+
+      for (let i = 0; i < cellsCount; i++) {
+        const poly = polygons[i];
+        if (!poly || poly.length < 3) continue;
+        gridCtx.beginPath();
+        gridCtx.moveTo(poly[0][0], poly[0][1]);
+        for (let j = 1; j < poly.length; j++) gridCtx.lineTo(poly[j][0], poly[j][1]);
+        gridCtx.closePath();
+        gridCtx.stroke();
+      }
+    }
+
+    function renderIsobars() {
+      const g = document.getElementById('svg-isobars');
+      g.innerHTML = '';
+      if (!state.layers.isobars) return;
+
+      const { points, cellsCount } = state.grid;
+      let dots = '';
+      for (let i = 0; i < cellsCount; i++) {
+        const p = Math.round(state.pressure[i]);
+        if (p % 4 === 0) {
+          const [x, y] = points[i];
+          dots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="1.6" fill="rgba(168, 85, 247, 0.55)" />`;
+        }
+      }
+      g.innerHTML = dots;
+    }
+
+    // RZEKI: TYLKO NA LĄDZIE, FORMUJĄ SIĘ OD PROGU Q >= 280 m3/s
+    function renderRiversLayer() {
+      const g = document.getElementById('svg-rivers');
+      g.innerHTML = '';
+      if (!state.layers.rivers) return;
+
+      const { points, cellsCount } = state.grid;
+      let riverPaths = '';
+
+      for (let i = 0; i < cellsCount; i++) {
+        if (state.heights[i] < 20) continue; // Rzeka płynie tylko po lądzie
+        const next = state.riverNext[i];
+        if (next === -1) continue;
+
+        const flow = state.riverFlow[i];
+        const strahler = state.strahler[i];
+
+        // Twardy próg formowania koryta rzecznego
+        if (flow < 280 && strahler < 2) continue;
+
+        const [x1, y1] = points[i];
+        const [x2, y2] = points[next];
+
+        // Leopold-Maddock: W = a * Q^0.5 * (1 + 0.15 * (Strahler - 1))
+        const widthPx = Math.min(5.5, Math.max(1.1, Math.sqrt(flow) * 0.11 * (1 + 0.12 * (strahler - 1))));
+        riverPaths += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#38bdf8" stroke-width="${widthPx.toFixed(1)}" stroke-linecap="round" opacity="0.92" />`;
+      }
+
+      g.innerHTML = riverPaths;
+    }
+
+    // WSTĘGI WIATRU (CAŁY ŚWIAT) ORAZ PRĄDÓW MORSKICH (ŚCIŚLE TYLKO OCEAN)
+    function renderStreamlines() {
+      const gWind = document.getElementById('svg-wind-streamlines');
+      const gOcean = document.getElementById('svg-ocean-ribbons');
+      gWind.innerHTML = '';
+      gOcean.innerHTML = '';
+
+      // 1. WIATRY 2D (PŁYNĄ NAD CAŁĄ MAPĄ)
+      if (state.layers.wind) {
+        let windPaths = '';
+        const numSeeds = 52;
+
+        for (let i = 0; i < numSeeds; i++) {
+          let x = (i % 9) * (state.width / 8) + (Math.random() * 50 - 25);
+          let y = Math.floor(i / 9) * (state.height / 5) + (Math.random() * 50 - 25);
+
+          let d = `M ${x.toFixed(1)} ${y.toFixed(1)}`;
+          let lastSpeed = 0;
+
+          for (let step = 0; step < 32; step++) {
+            const vec = getInterpolatedWind(x, y);
+            lastSpeed = vec.speed;
+            if (vec.speed < 0.2) break;
+
+            x += (vec.u / (vec.speed + 0.8)) * 18;
+            y += (vec.v / (vec.speed + 0.8)) * 18;
+            d += ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+          }
+
+          const color = getVelocityColor(lastSpeed);
+          windPaths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" opacity="0.75" filter="url(#glow-filter)" />`;
+        }
+        gWind.innerHTML = windPaths;
+      }
+
+      // 2. PRĄDY MORSKIE (ŚCIŚLE TYLKO OCEAN: h < 20, STOP NA BRZEGU)
+      if (state.layers.ocean) {
+        let oceanPaths = '';
+        const oceanSeeds = [];
+
+        // Zbieramy komórki oceaniczne z silnym prądem
+        const { points, cellsCount } = state.grid;
+        for (let i = 0; i < cellsCount; i++) {
+          if (state.heights[i] < 20 && state.oceanSpeed[i] > 2.0 && i % 4 === 0) {
+            oceanSeeds.push(points[i]);
+          }
+        }
+
+        for (let i = 0; i < Math.min(36, oceanSeeds.length); i++) {
+          let [x, y] = oceanSeeds[i];
+          let d = `M ${x.toFixed(1)} ${y.toFixed(1)}`;
+          let validStream = false;
+
+          for (let step = 0; step < 28; step++) {
+            const oVec = getInterpolatedOcean(x, y);
+            if (oVec.isLand || oVec.speed < 0.5) break; // ZATRZYMANIE W MOMENCIE DOTKNIĘCIA LĄDU
+
+            x += (oVec.u / (oVec.speed + 0.5)) * 20;
+            y += (oVec.v / (oVec.speed + 0.5)) * 20;
+            d += ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+            validStream = true;
+          }
+
+          if (validStream) {
+            oceanPaths += `<path d="${d}" fill="none" stroke="#facc15" stroke-width="3.8" stroke-linecap="round" opacity="0.9" />`;
+            oceanPaths += `<path d="${d}" fill="none" stroke="#0284c7" stroke-width="8.0" stroke-linecap="round" opacity="0.4" />`;
+          }
+        }
+        gOcean.innerHTML = oceanPaths;
+      }
+    }
+
+    // SPATIAL LOOKUP DLA WIATRU
+    function getInterpolatedWind(x, y) {
+      if (!state.spatialGrid) return { u: 0, v: 0, speed: 0 };
+      const gx = Math.min(state.spatialCols - 1, Math.max(0, Math.floor(x / state.spatialCellSize)));
+      const gy = Math.min(state.spatialRows - 1, Math.max(0, Math.floor(y / state.spatialCellSize)));
+      const cellIdx = state.spatialGrid[gy * state.spatialCols + gx];
+
+      return {
+        u: state.windU[cellIdx],
+        v: state.windV[cellIdx],
+        speed: state.windSpeed[cellIdx]
+      };
+    }
+
+    // SPATIAL LOOKUP DLA OCEANICZNYCH PRĄDÓW (Z MASKĄ LĄDU)
+    function getInterpolatedOcean(x, y) {
+      if (!state.spatialGrid) return { u: 0, v: 0, speed: 0, isLand: true };
+      const gx = Math.min(state.spatialCols - 1, Math.max(0, Math.floor(x / state.spatialCellSize)));
+      const gy = Math.min(state.spatialRows - 1, Math.max(0, Math.floor(y / state.spatialCellSize)));
+      const cellIdx = state.spatialGrid[gy * state.spatialCols + gx];
+
+      const isLand = state.heights[cellIdx] >= 20;
+      return {
+        u: state.oceanU[cellIdx],
+        v: state.oceanV[cellIdx],
+        speed: state.oceanSpeed[cellIdx],
+        isLand
+      };
+    }
+
+    function getVelocityColor(speed) {
+      if (speed < 3.5) return '#0284c7';
+      if (speed < 7.5) return '#06b6d4';
+      if (speed < 12.0) return '#10b981';
+      if (speed < 18.0) return '#facc15';
+      return '#ef4444';
+    }
+
+    // --- 6. ŻETONY BARYCZNE ---
+    function renderTokens() {
+      interactiveLayer.innerHTML = '';
+      state.centers.forEach(c => {
+        const token = document.createElement('div');
+        token.className = `pressure-token token-${c.type === 'H' ? 'high' : 'low'}`;
+        token.style.left = `${c.x}px`;
+        token.style.top = `${c.y}px`;
+        token.textContent = c.type;
+
+        const label = document.createElement('div');
+        label.className = 'token-label';
+        label.textContent = `${c.pressure} hPa`;
+        token.appendChild(label);
+
+        let isDragging = false;
+        token.addEventListener('mousedown', (e) => {
+          if (e.detail === 2) return;
+          isDragging = true;
+          token.style.zIndex = '100';
+          const onMouseMove = (ev) => {
+            if (!isDragging) return;
+            c.x = ev.clientX;
+            c.y = ev.clientY;
+            token.style.left = `${c.x}px`;
+            token.style.top = `${c.y}px`;
+            recalcPhysics();
+          };
+          const onMouseUp = () => {
+            isDragging = false;
+            token.style.zIndex = '40';
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+          };
+          window.addEventListener('mousemove', onMouseMove);
+          window.addEventListener('mouseup', onMouseUp);
+        });
+
+        token.addEventListener('dblclick', () => {
+          openTokenModal(c);
+        });
+
+        interactiveLayer.appendChild(token);
+      });
+    }
+
+    // --- 7. ZOPTYMALIZOWANE CZĄSTKI CANVAS (BLOCKED 60 FPS) ---
+    function initParticles() {
+      state.particles = [];
+      for (let i = 0; i < state.maxParticles; i++) {
+        state.particles.push(resetParticle({}));
+      }
+    }
+
+    function resetParticle(p) {
+      p.x = Math.random() * state.width;
+      p.y = Math.random() * state.height;
+      p.age = 0;
+      p.maxAge = 35 + Math.random() * 70;
+      return p;
+    }
+
+    let lastTime = performance.now();
+    let frameCount = 0;
+    const fpsEl = document.getElementById('hud-fps');
+
+    function animateParticles(now) {
+      requestAnimationFrame(animateParticles);
+
+      frameCount++;
+      if (now - lastTime >= 1000) {
+        fpsEl.textContent = frameCount;
+        frameCount = 0;
+        lastTime = now;
+      }
+
+      if (!state.layers.particles) {
+        particlesCtx.clearRect(0, 0, state.width, state.height);
+        return;
+      }
+
+      particlesCtx.fillStyle = 'rgba(4, 7, 17, 0.12)';
+      particlesCtx.fillRect(0, 0, state.width, state.height);
+
+      for (let i = 0; i < state.particles.length; i++) {
+        const p = state.particles[i];
+        p.age++;
+
+        if (p.age > p.maxAge || p.x < 0 || p.x > state.width || p.y < 0 || p.y > state.height) {
+          resetParticle(p);
+          continue;
+        }
+
+        const vec = getInterpolatedWind(p.x, p.y);
+        const prevX = p.x;
+        const prevY = p.y;
+
+        p.x += (vec.u / (vec.speed + 0.6)) * 3.8;
+        p.y += (vec.v / (vec.speed + 0.6)) * 3.8;
+
+        const color = getVelocityColor(vec.speed);
+        particlesCtx.strokeStyle = color;
+        particlesCtx.lineWidth = Math.min(vec.speed * 0.35, 2.4);
+        particlesCtx.beginPath();
+        particlesCtx.moveTo(prevX, prevY);
+        particlesCtx.lineTo(p.x, p.y);
+        particlesCtx.stroke();
+      }
+    }
+
+    // --- 8. OBSŁUGA UI I MODAL INSPEKTORA ---
+    document.querySelectorAll('.toggle-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const layer = chip.dataset.layer;
+        state.layers[layer] = !state.layers[layer];
+        chip.classList.toggle('active', state.layers[layer]);
+        renderAllLayers();
+      });
+    });
+
+    document.getElementById('btn-regen').addEventListener('click', () => {
+      generateFmgHeightmap();
+      recalcPhysics();
+    });
+
+    document.getElementById('btn-add-high').addEventListener('click', () => {
+      state.centers.push({
+        id: Date.now(),
+        type: 'H',
+        x: state.width / 2 + (Math.random() * 200 - 100),
+        y: state.height / 2 + (Math.random() * 200 - 100),
+        pressure: 1026,
+        radius: 400
+      });
+      recalcPhysics();
+    });
+
+    document.getElementById('btn-add-low').addEventListener('click', () => {
+      state.centers.push({
+        id: Date.now(),
+        type: 'L',
+        x: state.width / 2 + (Math.random() * 200 - 100),
+        y: state.height / 2 + (Math.random() * 200 - 100),
+        pressure: 994,
+        radius: 380
+      });
+      recalcPhysics();
+    });
+
+    const modal = document.getElementById('token-modal');
+    const modalBackdrop = document.getElementById('modal-backdrop');
+    const inputPressure = document.getElementById('input-pressure');
+    const inputRadius = document.getElementById('input-radius');
+    const valPressure = document.getElementById('val-pressure');
+    const valRadius = document.getElementById('val-radius');
+
+    function openTokenModal(token) {
+      state.selectedToken = token;
+      document.getElementById('modal-token-title').textContent = `Inspektor Ośrodka ${token.type === 'H' ? 'Wyżowego' : 'Niżowego'}`;
+      inputPressure.value = token.pressure;
+      inputRadius.value = token.radius;
+      valPressure.textContent = `${token.pressure} hPa`;
+      valRadius.textContent = `${token.radius} km`;
+      modal.style.display = 'flex';
+      modalBackdrop.style.display = 'block';
+    }
+
+    function closeTokenModal() {
+      modal.style.display = 'none';
+      modalBackdrop.style.display = 'none';
+      state.selectedToken = null;
+    }
+
+    document.getElementById('modal-close-btn').addEventListener('click', closeTokenModal);
+    modalBackdrop.addEventListener('click', closeTokenModal);
+
+    inputPressure.addEventListener('input', (e) => {
+      valPressure.textContent = `${e.target.value} hPa`;
+      if (state.selectedToken) {
+        state.selectedToken.pressure = parseFloat(e.target.value);
+        recalcPhysics();
+      }
+    });
+
+    inputRadius.addEventListener('input', (e) => {
+      valRadius.textContent = `${e.target.value} km`;
+      if (state.selectedToken) {
+        state.selectedToken.radius = parseFloat(e.target.value);
+        recalcPhysics();
+      }
+    });
+
+    document.getElementById('modal-save-btn').addEventListener('click', closeTokenModal);
+
+    // START
+    resize();
+    initParticles();
+    requestAnimationFrame(animateParticles);
+  </script>
+</body>
+</html>
