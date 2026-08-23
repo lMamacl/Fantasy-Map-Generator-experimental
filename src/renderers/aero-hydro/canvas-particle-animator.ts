@@ -1,7 +1,7 @@
 /**
  * Silnik animacji cząstek Canvas 2D (Aero-Hydro 2.0).
  *
- * Zapewnia renderowanie 60 FPS dla:
+ * Zapewnia ultra-płynne renderowanie 60 FPS dla:
  *   - Cząstek wiatru (Wind Stream Particles)
  *   - Cząstek prądów morskich (Ocean Current Particles)
  *
@@ -9,6 +9,7 @@
  */
 
 import { findClosestCellFast } from "@/utils/grid-math";
+import { getSpeedColor } from "./draw-aero-hydro";
 
 export interface Particle {
   x: number;
@@ -23,18 +24,18 @@ export interface Particle {
 export interface ParticleAnimatorConfig {
   numParticles: number;
   particleSpeedMultiplier: number;
-  trailAlpha: number; // zanikanie śladu na canvasie (np. 0.92)
-  particleColor: string; // np. "rgba(200, 230, 255, 0.8)" dla wiatru, "rgba(50, 180, 255, 0.8)" dla oceanu
+  trailAlpha: number;
+  particleColor: string;
   minSpeed: number;
   type: "wind" | "ocean";
 }
 
 export const DEFAULT_PARTICLE_CONFIG: ParticleAnimatorConfig = {
-  numParticles: 300,
-  particleSpeedMultiplier: 1.2,
-  trailAlpha: 0.92,
-  particleColor: "rgba(220, 240, 255, 0.75)",
-  minSpeed: 0.1,
+  numParticles: 2500,
+  particleSpeedMultiplier: 3.8,
+  trailAlpha: 0.12,
+  particleColor: "rgba(220, 240, 255, 0.8)",
+  minSpeed: 0.2,
   type: "wind"
 };
 
@@ -67,7 +68,6 @@ export class CanvasParticleAnimator {
     this.particles = [];
     for (let i = 0; i < this.config.numParticles; i++) {
       const p = this.createParticle(width, height);
-      // Rozsiej wiek losowo, by cząstki nie odradzały się symultanicznie
       p.age = Math.floor(Math.random() * p.maxAge);
       this.particles.push(p);
     }
@@ -85,7 +85,7 @@ export class CanvasParticleAnimator {
       oldX: x,
       oldY: y,
       age: 0,
-      maxAge: 40 + Math.floor(Math.random() * 60), // 40–100 klatek
+      maxAge: 35 + Math.floor(Math.random() * 70), // 35–105 klatek
       speed: 0
     };
   }
@@ -108,7 +108,11 @@ export class CanvasParticleAnimator {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
+    if (this.ctx && typeof this.ctx.clearRect === "function" && this.canvas) {
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
   }
+
 
   /**
    * Główna pętla klatki animacji.
@@ -148,7 +152,7 @@ export class CanvasParticleAnimator {
       p.oldY = p.y;
       p.age++;
 
-      // Znajdź najbliższą komórkę siatki
+      // Znajdź najbliższą komórkę siatki w czasie O(1)
       const cellIdx = this.findClosestCell(p.x, p.y, points);
 
       // Jeśli cząstka oceanu trafi na ląd lub skończy się czas życia
@@ -168,9 +172,9 @@ export class CanvasParticleAnimator {
         continue;
       }
 
-      // Przemieszczenie cząstki
-      p.x += u * this.config.particleSpeedMultiplier;
-      p.y += v * this.config.particleSpeedMultiplier;
+      // Płynne znormalizowane przemieszczenie z prędkością
+      p.x += (u / (speed + 0.6)) * this.config.particleSpeedMultiplier;
+      p.y += (v / (speed + 0.6)) * this.config.particleSpeedMultiplier;
 
       // Granice canvasu
       if (p.x < 0 || p.x > width || p.y < 0 || p.y > height) {
@@ -180,7 +184,7 @@ export class CanvasParticleAnimator {
   }
 
   /**
-   * Rysuje cząstki i ślady na Canvasie.
+   * Rysuje cząstki i smugi na Canvasie.
    */
   draw(): void {
     if (!this.ctx || !this.canvas) return;
@@ -189,27 +193,28 @@ export class CanvasParticleAnimator {
     const width = this.canvas.width;
     const height = this.canvas.height;
 
-    // Półprzezroczyste czyszczenie dla efektu zanikającego ogona (motion blur / trail)
+    // Półprzezroczysty trail fade dla aksamitnego ogona wiatru
     ctx.save();
-    ctx.globalCompositeOperation = "destination-in";
-    ctx.fillStyle = `rgba(0, 0, 0, ${this.config.trailAlpha})`;
+    ctx.fillStyle = `rgba(4, 7, 17, ${this.config.trailAlpha})`;
     ctx.fillRect(0, 0, width, height);
     ctx.restore();
 
     ctx.save();
-    ctx.strokeStyle = this.config.particleColor;
-    ctx.lineWidth = 1.2;
     ctx.lineCap = "round";
 
-    ctx.beginPath();
     for (let i = 0; i < this.particles.length; i++) {
       const p = this.particles[i];
       if (p.age <= 1) continue;
 
+      const color = getSpeedColor(p.speed);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.min(p.speed * 0.35 + 0.8, 2.4);
+
+      ctx.beginPath();
       ctx.moveTo(p.oldX, p.oldY);
       ctx.lineTo(p.x, p.y);
+      ctx.stroke();
     }
-    ctx.stroke();
     ctx.restore();
   }
 
@@ -222,7 +227,7 @@ export class CanvasParticleAnimator {
     p.oldX = p.x;
     p.oldY = p.y;
     p.age = 0;
-    p.maxAge = 40 + Math.floor(Math.random() * 60);
+    p.maxAge = 35 + Math.floor(Math.random() * 70);
     p.speed = 0;
   }
 
