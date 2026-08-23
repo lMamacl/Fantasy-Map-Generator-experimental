@@ -1,23 +1,25 @@
 /**
- * Renderer warstwy pola ciśnienia atmosferycznego (izobary, gradienty i centra baryczne).
+ * Renderer warstwy pola ciśnienia atmosferycznego (kolorowa nakładka granat → zieleń → złoto oraz interaktywne żetony H/L).
  *
  * @module renderers/aero-hydro/draw-pressure
  */
 
-import {
-  color,
-  curveBasisClosed,
-  interpolateSpectral,
-  leastIndex,
-  line,
-  max,
-  min,
-  range,
-  scaleSequential,
-  select
-} from "d3";
+import { drag, select } from "d3";
+import { AtmosphereEngine } from "@/generators/aero-hydro/atmosphere-engine";
 import type { BaricCenter } from "@/types/aero-hydro";
-import { connectVertices, round } from "@/utils";
+
+export function getPressureColor(p: number): string {
+  // Paleta: Niż (ciemny granat) → Normalne (zieleń/szmaragd) → Wyż (złoto/bursztyn)
+  if (p < 990) return "#0b1a30"; // ciemny granat
+  if (p < 998) return "#1e3a8a"; // głęboki szafir
+  if (p < 1006) return "#0284c7"; // błękit
+  if (p < 1013) return "#06b6d4"; // cyjan
+  if (p < 1018) return "#059669"; // szmaragd
+  if (p < 1024) return "#10b981"; // soczysta zieleń
+  if (p < 1028) return "#eab308"; // złoto
+  if (p < 1034) return "#f59e0b"; // bursztyn
+  return "#ea580c"; // ciepły cynober
+}
 
 function getOrCreateGroup(id: string): SVGGElement | null {
   let g = document.getElementById(id) as SVGGElement | null;
@@ -42,174 +44,145 @@ export function drawPressure(): void {
   const grid = (globalThis as any).grid;
   if (!grid?.cells?.i) return;
 
-  const { cells, vertices } = grid;
+  const { cells, vertices, points } = grid;
   const n = cells.i.length;
 
-  const graphWidth = (globalThis as any).graphWidth || 1000;
-  const graphHeight = (globalThis as any).graphHeight || 1000;
-
-  // Pole ciśnienia w hPa
-  let pressureField: Float32Array = cells.pressureHPa;
+  // Pobierz pole ciśnienia
+  let pressureField: Float32Array = cells.pressure || cells.pressureHPa;
   if (!pressureField || pressureField.length !== n) {
-    pressureField = new Float32Array(n);
-    for (let i = 0; i < n; i++) pressureField[i] = 1013;
+    AtmosphereEngine.generate();
+    pressureField = cells.pressure || cells.pressureHPa;
+  }
+  if (!pressureField) return;
+
+  // 1. Kolorowa nakładka komórek Voronoi (błyskawiczny render O(N) bez zamrażania UI)
+  const cellsGroup = g.append("g").attr("id", "pressureHeatmap").attr("opacity", 0.45);
+
+  for (let i = 0; i < n; i++) {
+    const p = pressureField[i];
+    const vList = cells.v[i];
+    if (!vList || vList.length < 3) continue;
+
+    const firstPt = vertices?.p?.[vList[0]];
+    if (!firstPt) continue;
+
+    let d = `M ${firstPt[0].toFixed(1)} ${firstPt[1].toFixed(1)}`;
+    for (let j = 1; j < vList.length; j++) {
+      const pt = vertices.p[vList[j]];
+      if (pt) d += ` L ${pt[0].toFixed(1)} ${pt[1].toFixed(1)}`;
+    }
+    d += " Z";
+
+    const fill = getPressureColor(p);
+    cellsGroup.append("path").attr("d", d).attr("fill", fill).attr("stroke", "none");
   }
 
-  const pMin = Math.floor(Number(min(pressureField)) || 980);
-  const pMax = Math.ceil(Number(max(pressureField)) || 1035);
-  const step = Math.max(Math.round((pMax - pMin) / 8), 4);
-
-  const isolines = range(pMin + step, pMax, step);
-  const checkedCells = new Uint8Array(n);
-  const addToChecked = (cellId: number) => {
-    checkedCells[cellId] = 1;
-  };
-
-  const lineGen = line<[number, number]>().curve(curveBasisClosed);
-  // Spektrum: niże (niebieski/fiolet) -> wyże (czerwony/pomarańcz)
-  const scheme = scaleSequential(interpolateSpectral);
-
-  const chains: [number, [number, number][]][] = [];
-  const labels: [number, number, number][] = [];
-
-  for (const cellId of cells.i) {
-    const p = pressureField[cellId];
-    if (checkedCells[cellId] || !isolines.some(iso => Math.abs(iso - p) < step * 0.5)) continue;
-
-    const targetIso = isolines.reduce((prev, curr) => (Math.abs(curr - p) < Math.abs(prev - p) ? curr : prev));
-    const startingVertex = findStart(cellId, targetIso);
-    if (!startingVertex) continue;
-    checkedCells[cellId] = 1;
-
-    const ofSameType = (id: number) => pressureField[id] >= targetIso;
-    const chain = connectVertices({
-      vertices,
-      startingVertex,
-      ofSameType,
-      addToChecked
-    });
-
-    const relaxed = chain.filter((v: number, i: number) => i % 4 === 0 || vertices.c[v].some((c: number) => c >= n));
-    if (relaxed.length < 6) continue;
-
-    const points: [number, number][] = relaxed.map((v: number) => vertices.p[v]);
-    chains.push([targetIso, points]);
-    addLabel(points, targetIso);
+  // 2. Delikatne znaczniki izobar (punkty co 4 hPa)
+  const isobarsGroup = g.append("g").attr("id", "isobarsDots");
+  for (let i = 0; i < n; i++) {
+    const p = Math.round(pressureField[i]);
+    if (p % 4 === 0) {
+      const [px, py] = points[i];
+      isobarsGroup
+        .append("circle")
+        .attr("cx", px.toFixed(1))
+        .attr("cy", py.toFixed(1))
+        .attr("r", 1.8)
+        .attr("fill", "rgba(255, 255, 255, 0.45)");
+    }
   }
 
-  // Tło bazowe
-  g.append("path")
-    .attr("d", `M0,0 h${graphWidth} v${graphHeight} h${-graphWidth} Z`)
-    .attr("fill", scheme(1 - (pMin - 960) / 90))
-    .attr("opacity", 0.45)
-    .attr("stroke", "none");
-
-  // Wypełnienia izobar
-  for (const iso of isolines) {
-    const path = chains
-      .filter(c => c[0] === iso)
-      .map(c => round(lineGen(c[1]) || ""))
-      .join("");
-    if (!path) continue;
-
-    const fill = scheme(1 - (iso - 960) / 90);
-    const strokeColor = color(fill)!.darker(0.3).toString();
-
-    g.append("path")
-      .attr("d", path)
-      .attr("fill", fill)
-      .attr("fill-opacity", 0.45)
-      .attr("stroke", strokeColor)
-      .attr("stroke-width", 1.2)
-      .attr("stroke-dasharray", iso === 1013 ? "none" : "3 3");
-  }
-
-  // Etykiety izobar (np. 1020 hPa)
-  const labelsGroup = g.append("g").attr("id", "pressureLabels").attr("fill-opacity", 0.9);
-  labelsGroup
-    .selectAll("text")
-    .data(labels)
-    .enter()
-    .append("text")
-    .attr("x", d => d[0])
-    .attr("y", d => d[1])
-    .attr("text-anchor", "middle")
-    .attr("font-family", "Arial, sans-serif")
-    .attr("font-size", "11px")
-    .attr("font-weight", "bold")
-    .attr("fill", "#334155")
-    .attr("stroke", "#ffffff")
-    .attr("stroke-width", 2)
-    .attr("paint-order", "stroke fill")
-    .text(d => `${Math.round(d[2])} hPa`);
-
-  // Znaczniki wyżów (H) i niżów (L)
+  // 3. Interaktywne Żetony Centrów Barycznych (H/L) z obsługą przeciągania myszką (Drag & Drop)
   const options = (globalThis as any).options;
   const centers: BaricCenter[] = options?.atmosphere?.baricCenters || [];
   if (centers.length > 0) {
     const centersGroup = g.append("g").attr("id", "pressureCentersMarkers");
 
+    const dragBehavior = drag<SVGGElement, BaricCenter>()
+      .on("start", function () {
+        select(this).raise().style("cursor", "grabbing");
+      })
+      .on("drag", function (event, d) {
+        d.x = event.x;
+        d.y = event.y;
+        select(this).attr("transform", `translate(${d.x}, ${d.y})`);
+
+        // Dynamiczne przeliczenie fizyki i odświeżenie mapy na żywo
+        AtmosphereEngine.generate();
+        updatePressureColorsOnly();
+        import("./draw-aero-hydro").then(m => m.drawWinds());
+      })
+      .on("end", function () {
+        select(this).style("cursor", "grab");
+        drawPressure();
+      });
+
     for (let i = 0; i < centers.length; i++) {
       const c = centers[i];
-      const isHigh = c.pressureHPa >= 1013;
+      const isHigh = c.type === "high" || c.pressureHPa >= 1013;
       const label = isHigh ? "H" : "L";
-      const badgeColor = isHigh ? "#dc2626" : "#2563eb";
+      const badgeColor = isHigh ? "#3b82f6" : "#ef4444";
 
-      // Kółko
-      centersGroup
+      const tokenG = centersGroup
+        .append("g")
+        .datum(c)
+        .attr("class", "baric-center-token")
+        .attr("transform", `translate(${c.x}, ${c.y})`)
+        .style("cursor", "grab")
+        .call(dragBehavior as any);
+
+      // Pulsujący pierścień zewnętrzny
+      tokenG
         .append("circle")
-        .attr("cx", c.x)
-        .attr("cy", c.y)
-        .attr("r", 15)
-        .attr("fill", badgeColor)
-        .attr("fill-opacity", 0.9)
-        .attr("stroke", "#ffffff")
-        .attr("stroke-width", 2);
+        .attr("r", 22)
+        .attr("fill", "none")
+        .attr("stroke", badgeColor)
+        .attr("stroke-width", 1.5)
+        .attr("stroke-dasharray", "4 3")
+        .attr("opacity", 0.75);
 
-      // Litera
-      centersGroup
+      // Główny dysk żetonu
+      tokenG
+        .append("circle")
+        .attr("r", 17)
+        .attr("fill", badgeColor)
+        .attr("stroke", "#ffffff")
+        .attr("stroke-width", 2.2);
+
+      // Litera H / L
+      tokenG
         .append("text")
-        .attr("x", c.x)
-        .attr("y", c.y + 5)
+        .attr("y", 6)
         .attr("text-anchor", "middle")
-        .attr("font-family", "Arial, sans-serif")
-        .attr("font-size", "15px")
+        .attr("font-family", "Outfit, Arial, sans-serif")
+        .attr("font-size", "17px")
         .attr("font-weight", "bold")
         .attr("fill", "#ffffff")
+        .attr("pointer-events", "none")
         .text(label);
 
-      // Wartość ciśnienia pod literą
-      centersGroup
+      // Etykieta z wartością ciśnienia pod żetonem
+      tokenG
         .append("text")
-        .attr("x", c.x)
-        .attr("y", c.y + 26)
+        .attr("y", 34)
         .attr("text-anchor", "middle")
-        .attr("font-family", "Arial, sans-serif")
-        .attr("font-size", "12px")
+        .attr("font-family", "JetBrains Mono, monospace")
+        .attr("font-size", "11px")
         .attr("font-weight", "bold")
-        .attr("fill", badgeColor)
-        .attr("stroke", "#ffffff")
-        .attr("stroke-width", 2.5)
+        .attr("fill", "#f8fafc")
+        .attr("stroke", "#0f172a")
+        .attr("stroke-width", 3)
         .attr("paint-order", "stroke fill")
+        .attr("pointer-events", "none")
         .text(`${Math.round(c.pressureHPa)} hPa`);
     }
   }
 
-  function findStart(i: number, iso: number): number | undefined {
-    if (cells.b[i]) return cells.v[i].find((v: number) => vertices.c[v].some((c: number) => c >= n));
-    return cells.v[i][cells.c[i].findIndex((c: number) => pressureField[c] < iso || !pressureField[c])];
-  }
-
-  function addLabel(points: [number, number][], iso: number): void {
-    const xCenter = graphWidth / 2;
-    const tcIndex = leastIndex(
-      points,
-      (a: [number, number], b: [number, number]) =>
-        a[1] - b[1] + (Math.abs(a[0] - xCenter) - Math.abs(b[0] - xCenter)) / 2
-    );
-    if (tcIndex !== undefined && points[tcIndex]) {
-      const tc = points[tcIndex];
-      labels.push([tc[0], tc[1], iso]);
+  function updatePressureColorsOnly(): void {
+    const paths = cellsGroup.selectAll("path").nodes() as SVGPathElement[];
+    const curPressure: Float32Array = cells.pressure || cells.pressureHPa;
+    for (let i = 0; i < paths.length && i < curPressure.length; i++) {
+      paths[i].setAttribute("fill", getPressureColor(curPressure[i]));
     }
   }
 }

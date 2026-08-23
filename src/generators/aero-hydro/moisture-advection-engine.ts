@@ -82,8 +82,8 @@ export class MoistureAdvectionEngineModule {
         const windEvapBonus = 1 + Math.min(windSpeed * 0.03, 0.5);
         moisture[i] = satVaporCapacity * windEvapBonus;
       } else {
-        // Ląd startuje z wilgocią szczątkową
-        moisture[i] = satVaporCapacity * 0.15;
+        // Ląd startuje z zerową wilgocią (wilgoć napływa z oceanu wraz z adwekcją)
+        moisture[i] = 0;
       }
     }
 

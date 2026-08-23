@@ -72,10 +72,10 @@ describe("draw-aero-hydro", () => {
 
   it("getSpeedColor() poprawnie mapuje prędkość na paletę barw", () => {
     expect(drawAeroHydro.getSpeedColor(1.0)).toBe("#0284c7");
-    expect(drawAeroHydro.getSpeedColor(3.5)).toBe("#06b6d4");
-    expect(drawAeroHydro.getSpeedColor(6.0)).toBe("#10b981");
-    expect(drawAeroHydro.getSpeedColor(10.0)).toBe("#f59e0b");
-    expect(drawAeroHydro.getSpeedColor(15.0)).toBe("#ef4444");
+    expect(drawAeroHydro.getSpeedColor(5.0)).toBe("#06b6d4");
+    expect(drawAeroHydro.getSpeedColor(9.0)).toBe("#10b981");
+    expect(drawAeroHydro.getSpeedColor(14.0)).toBe("#facc15");
+    expect(drawAeroHydro.getSpeedColor(20.0)).toBe("#ef4444");
   });
 
   it("drawPressure() i removePressure() renderują i usuwają izobary oraz centra baryczne", () => {

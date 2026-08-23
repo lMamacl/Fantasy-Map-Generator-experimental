@@ -1,9 +1,10 @@
 /**
  * Silnik animacji cząstek Canvas 2D (Aero-Hydro 2.0).
  *
- * Zapewnia ultra-płynne renderowanie 60 FPS dla:
- *   - Cząstek wiatru (Wind Stream Particles)
- *   - Cząstek prądów morskich (Ocean Current Particles)
+ * Zoptymalizowany pod kątem wydajności O(1) i estetyki:
+ *   - 3200 aktywnych cząstek z przezroczystym motion blur (bez czarnego tła)
+ *   - Zrównoważona prędkość dryfu (1.5 px/ramkę) dla majestatycznego przepływu
+ *   - Kolorystyka i grubość linii zależna od prędkości przepływu |V|
  *
  * @module renderers/aero-hydro/canvas-particle-animator
  */
@@ -31,9 +32,9 @@ export interface ParticleAnimatorConfig {
 }
 
 export const DEFAULT_PARTICLE_CONFIG: ParticleAnimatorConfig = {
-  numParticles: 2500,
-  particleSpeedMultiplier: 3.8,
-  trailAlpha: 0.12,
+  numParticles: 3200,
+  particleSpeedMultiplier: 1.5,
+  trailAlpha: 0.08,
   particleColor: "rgba(220, 240, 255, 0.8)",
   minSpeed: 0.2,
   type: "wind"
@@ -59,15 +60,15 @@ export class CanvasParticleAnimator {
   }
 
   /**
-   * Inicjalizuje pulę cząstek o losowych pozycjach i czasach życia.
+   * Inicjalizuje pulę cząstek.
    */
   private initParticles(): void {
-    const width = this.canvas?.width || 1000;
-    const height = this.canvas?.height || 1000;
+    const graphWidth = (globalThis as any).graphWidth || 1000;
+    const graphHeight = (globalThis as any).graphHeight || 1000;
 
     this.particles = [];
     for (let i = 0; i < this.config.numParticles; i++) {
-      const p = this.createParticle(width, height);
+      const p = this.createParticle(graphWidth, graphHeight);
       p.age = Math.floor(Math.random() * p.maxAge);
       this.particles.push(p);
     }
@@ -100,7 +101,7 @@ export class CanvasParticleAnimator {
   }
 
   /**
-   * Zatrzymuje animację.
+   * Zatrzymuje animację i czyści canvas.
    */
   stop(): void {
     this.isRunning = false;
@@ -112,7 +113,6 @@ export class CanvasParticleAnimator {
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     }
   }
-
 
   /**
    * Główna pętla klatki animacji.
@@ -129,14 +129,14 @@ export class CanvasParticleAnimator {
   };
 
   /**
-   * Aktualizuje pozycje cząstek na podstawie wektorów siatki.
+   * Aktualizuje pozycje cząstek na podstawie siatki w czasie O(1).
    */
   update(): void {
     const grid = (globalThis as any).grid;
-    if (!grid?.cells?.i || !this.canvas) return;
+    if (!grid?.cells?.i) return;
 
-    const width = this.canvas.width || 1000;
-    const height = this.canvas.height || 1000;
+    const graphWidth = (globalThis as any).graphWidth || 1000;
+    const graphHeight = (globalThis as any).graphHeight || 1000;
 
     const uField: Float32Array = this.config.type === "wind" ? grid.cells.windU : grid.cells.oceanU;
     const vField: Float32Array = this.config.type === "wind" ? grid.cells.windV : grid.cells.oceanV;
@@ -152,13 +152,17 @@ export class CanvasParticleAnimator {
       p.oldY = p.y;
       p.age++;
 
-      // Znajdź najbliższą komórkę siatki w czasie O(1)
-      const cellIdx = this.findClosestCell(p.x, p.y, points);
+      if (p.age > p.maxAge || p.x < 0 || p.x > graphWidth || p.y < 0 || p.y > graphHeight) {
+        this.resetParticle(p, graphWidth, graphHeight);
+        continue;
+      }
 
-      // Jeśli cząstka oceanu trafi na ląd lub skończy się czas życia
+      const cellIdx = findClosestCellFast(p.x, p.y, points);
+
+      // Zatrzymanie cząstek oceanu przed lądem
       const onLand = this.config.type === "ocean" && cells.h[cellIdx] >= 20;
-      if (p.age >= p.maxAge || onLand) {
-        this.resetParticle(p, width, height);
+      if (onLand) {
+        this.resetParticle(p, graphWidth, graphHeight);
         continue;
       }
 
@@ -168,38 +172,41 @@ export class CanvasParticleAnimator {
       p.speed = speed;
 
       if (speed < this.config.minSpeed) {
-        this.resetParticle(p, width, height);
+        this.resetParticle(p, graphWidth, graphHeight);
         continue;
       }
 
-      // Płynne znormalizowane przemieszczenie z prędkością
       p.x += (u / (speed + 0.6)) * this.config.particleSpeedMultiplier;
       p.y += (v / (speed + 0.6)) * this.config.particleSpeedMultiplier;
-
-      // Granice canvasu
-      if (p.x < 0 || p.x > width || p.y < 0 || p.y > height) {
-        this.resetParticle(p, width, height);
-      }
     }
   }
 
   /**
-   * Rysuje cząstki i smugi na Canvasie.
+   * Rysuje cząstki na przezroczystym Canvasie.
    */
   draw(): void {
-    if (!this.ctx || !this.canvas) return;
+    if (!this.canvas || !this.ctx) return;
 
     const ctx = this.ctx;
     const width = this.canvas.width;
     const height = this.canvas.height;
 
-    // Półprzezroczysty trail fade dla aksamitnego ogona wiatru
+    // Przezroczyste wygaszanie smug (brak czarnego tła!)
     ctx.save();
-    ctx.fillStyle = `rgba(4, 7, 17, ${this.config.trailAlpha})`;
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.fillStyle = `rgba(0, 0, 0, ${this.config.trailAlpha})`;
     ctx.fillRect(0, 0, width, height);
     ctx.restore();
 
+    // Transformacja D3 Zoom & Pan
+    const viewX = (globalThis as any).viewX || 0;
+    const viewY = (globalThis as any).viewY || 0;
+    const scale = (globalThis as any).scale || 1;
+
     ctx.save();
+    if (typeof ctx.setTransform === "function") {
+      ctx.setTransform(scale, 0, 0, scale, viewX, viewY);
+    }
     ctx.lineCap = "round";
 
     for (let i = 0; i < this.particles.length; i++) {
@@ -208,13 +215,14 @@ export class CanvasParticleAnimator {
 
       const color = getSpeedColor(p.speed);
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.min(p.speed * 0.35 + 0.8, 2.4);
+      ctx.lineWidth = Math.min(p.speed * 0.35, 2.4);
 
       ctx.beginPath();
       ctx.moveTo(p.oldX, p.oldY);
       ctx.lineTo(p.x, p.y);
       ctx.stroke();
     }
+
     ctx.restore();
   }
 
@@ -229,13 +237,6 @@ export class CanvasParticleAnimator {
     p.age = 0;
     p.maxAge = 35 + Math.floor(Math.random() * 70);
     p.speed = 0;
-  }
-
-  /**
-   * Znajduje najbliższą komórkę siatki w czasie O(1).
-   */
-  private findClosestCell(x: number, y: number, points: [number, number][]): number {
-    return findClosestCellFast(x, y, points);
   }
 
   /**

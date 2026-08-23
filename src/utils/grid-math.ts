@@ -5,15 +5,6 @@
 
 /**
  * Konwertuje fizyczne kilometry do odległości wyrażonej w komórkach siatki.
- * Uwzględnia szerokość wycinka mapy na globie (`mapCoordinates.lonT`) oraz rozdzielczość siatki (`cellsX`).
- *
- * @param km Odległość fizyczna w kilometrach (musi być nieujemna)
- * @returns Równoważna liczba komórek siatki
- *
- * @example
- * ```ts
- * const cells = kmToGridCells(1500); // np. 45 komórek dla mapy kontynentu
- * ```
  */
 export function kmToGridCells(km: number): number {
   if (km < 0) return 0;
@@ -21,7 +12,6 @@ export function kmToGridCells(km: number): number {
   const grid = (globalThis as any).grid;
   if (!mapCoordinates || !grid) return km / 10;
 
-  // Obwód Ziemi ~40075 km
   const mapWidthKm = (Math.max(mapCoordinates.lonT, 1) / 360) * 40075;
   const kmPerCell = mapWidthKm / Math.max(grid.cellsX || 100, 1);
   return km / Math.max(kmPerCell, 0.001);
@@ -29,9 +19,6 @@ export function kmToGridCells(km: number): number {
 
 /**
  * Konwertuje liczbę komórek siatki do odległości fizycznej w kilometrach.
- *
- * @param cells Liczba komórek
- * @returns Odległość w kilometrach
  */
 export function gridCellsToKm(cells: number): number {
   if (cells < 0) return 0;
@@ -46,8 +33,6 @@ export function gridCellsToKm(cells: number): number {
 
 /**
  * Wyznacza fizyczną powierzchnię pojedynczej komórki siatki w km².
- *
- * @returns Powierzchnia komórki w km²
  */
 export function cellAreaKm2(): number {
   const mapCoordinates = (globalThis as any).mapCoordinates;
@@ -63,12 +48,6 @@ export function cellAreaKm2(): number {
 /**
  * Oblicza gradient pola skalarnego [dF/dx, dF/dy] w podanej komórce `cellIndex`
  * metodą ważoną odwrotnością odległości (IDW - Inverse Distance Weighting).
- *
- * @param field Tablica wartości skalaru (np. ciśnienia lub wysokości)
- * @param cellIndex Indeks komórki centralnej
- * @param points Tablica współrzędnych [x, y] punktów siatki
- * @param neighbors Tablica indeksów sąsiadów dla każdej komórki
- * @returns [gradX, gradY] gradient skalaru
  */
 export function scalarGradient(
   field: Float32Array,
@@ -98,18 +77,13 @@ export function scalarGradient(
     if (distSq < 1e-6) continue;
 
     const df = fn - f0;
+    const weight = 1 / distSq;
 
-    if (Math.abs(dx) > 1e-4) {
-      const weightX = 1 / Math.abs(dx);
-      sumDx += (df / dx) * weightX;
-      sumWeightX += weightX;
-    }
+    sumDx += df * (dx / Math.sqrt(distSq)) * weight;
+    sumWeightX += weight;
 
-    if (Math.abs(dy) > 1e-4) {
-      const weightY = 1 / Math.abs(dy);
-      sumDy += (df / dy) * weightY;
-      sumWeightY += weightY;
-    }
+    sumDy += df * (dy / Math.sqrt(distSq)) * weight;
+    sumWeightY += weight;
   }
 
   const gradX = sumWeightX > 0 ? sumDx / sumWeightX : 0;
@@ -119,16 +93,37 @@ export function scalarGradient(
 }
 
 /**
- * Rzutuje wektor prądu morskiego lub wiatru na kierunek styczny do linii brzegowej,
- * usuwając składową prostopadłą wnikającą w ląd (warunek V · n_coast = 0).
- *
- * @param u Składowa X wektora prędkości
- * @param v Składowa Y wektora prędkości
- * @param cellIndex Indeks komórki
- * @param cellsT Tablica odległości od brzegu (`cells.t`), gdzie wartości > 0 to ląd
- * @param points Współrzędne punktów
- * @param neighbors Sąsiedzi komórek
- * @returns [tangU, tangV] wektor po usunięciu składowej prostopadłej do lądu
+ * Wygładza pole skalarne za pomocą dyskretnego operatora Laplasjanu na grafie komórek Voronoi.
+ */
+export function laplacianSmooth(field: Float32Array, neighbors: number[][], lambda = 0.25, iterations = 1): void {
+  if (lambda <= 0 || iterations <= 0) return;
+  const n = field.length;
+  const temp = new Float32Array(n);
+
+  for (let it = 0; it < iterations; it++) {
+    for (let i = 0; i < n; i++) {
+      const nb = neighbors[i];
+      if (!nb || nb.length === 0) {
+        temp[i] = field[i];
+        continue;
+      }
+
+      let sum = 0;
+      for (let k = 0; k < nb.length; k++) {
+        sum += field[nb[k]];
+      }
+      const avg = sum / nb.length;
+      temp[i] = field[i] + lambda * (avg - field[i]);
+    }
+
+    for (let i = 0; i < n; i++) {
+      field[i] = temp[i];
+    }
+  }
+}
+
+/**
+ * Rzutuje wektor prędkości (u, v) na kierunek styczny do linii brzegowej.
  */
 export function projectTangentToCoast(
   u: number,
@@ -149,7 +144,6 @@ export function projectTangentToCoast(
   for (let i = 0; i < nb.length; i++) {
     const n = nb[i];
     if (cellsT[n] > 0) {
-      // sąsiad jest lądem
       const [xn, yn] = points[n];
       const dx = xn - x0;
       const dy = yn - y0;
@@ -169,8 +163,6 @@ export function projectTangentToCoast(
 
   const nx = normX / normLen;
   const ny = normY / normLen;
-
-  // Iloczyn skalarny V · n (dodatni, gdy wektor zmierza ku lądowi)
   const dot = u * nx + v * ny;
 
   if (dot > 0) {
@@ -186,13 +178,14 @@ export interface SpatialGrid {
   cellSize: number;
   cols: number;
   rows: number;
+  cellLookup: Int32Array;
   buckets: number[][];
 }
 
 let cachedSpatialGrid: SpatialGrid | null = null;
 let cachedPointsRef: [number, number][] | null = null;
 
-export function getOrCreateSpatialGrid(points: [number, number][], cellSize = 60): SpatialGrid {
+export function getOrCreateSpatialGrid(points: [number, number][], cellSize = 22): SpatialGrid {
   if (cachedSpatialGrid && cachedPointsRef === points && cachedSpatialGrid.cellSize === cellSize) {
     return cachedSpatialGrid;
   }
@@ -207,16 +200,19 @@ export function getOrCreateSpatialGrid(points: [number, number][], cellSize = 60
   const cols = Math.max(1, Math.ceil((maxX + 100) / cellSize));
   const rows = Math.max(1, Math.ceil((maxY + 100) / cellSize));
   const total = cols * rows;
+  const cellLookup = new Int32Array(total).fill(0);
   const buckets: number[][] = Array.from({ length: total }, () => []);
 
   for (let i = 0; i < points.length; i++) {
     const [px, py] = points[i];
     const col = Math.max(0, Math.min(cols - 1, Math.floor(px / cellSize)));
     const row = Math.max(0, Math.min(rows - 1, Math.floor(py / cellSize)));
-    buckets[row * cols + col].push(i);
+    const bucketIdx = row * cols + col;
+    cellLookup[bucketIdx] = i;
+    buckets[bucketIdx].push(i);
   }
 
-  cachedSpatialGrid = { cellSize, cols, rows, buckets };
+  cachedSpatialGrid = { cellSize, cols, rows, cellLookup, buckets };
   cachedPointsRef = points;
   return cachedSpatialGrid;
 }
@@ -228,60 +224,15 @@ export function findClosestCellFast(
   spatialGrid?: SpatialGrid
 ): number {
   if (!points || points.length === 0) return 0;
-  const grid = spatialGrid || getOrCreateSpatialGrid(points);
-  const { cellSize, cols, rows, buckets } = grid;
-
-  const centerCol = Math.floor(x / cellSize);
-  const centerRow = Math.floor(y / cellSize);
-
-  let bestIdx = 0;
-  let bestDistSq = Infinity;
-
-  const minR = Math.max(0, centerRow - 1);
-  const maxR = Math.min(rows - 1, centerRow + 1);
-  const minC = Math.max(0, centerCol - 1);
-  const maxC = Math.min(cols - 1, centerCol + 1);
-
-  for (let r = minR; r <= maxR; r++) {
-    for (let c = minC; c <= maxC; c++) {
-      const bucket = buckets[r * cols + c];
-      for (let k = 0; k < bucket.length; k++) {
-        const i = bucket[k];
-        const [px, py] = points[i];
-        const d = (x - px) * (x - px) + (y - py) * (y - py);
-        if (d < bestDistSq) {
-          bestDistSq = d;
-          bestIdx = i;
-        }
-      }
-    }
-  }
-
-  if (bestDistSq === Infinity) {
-    for (let i = 0; i < points.length; i++) {
-      const [px, py] = points[i];
-      const d = (x - px) * (x - px) + (y - py) * (y - py);
-      if (d < bestDistSq) {
-        bestDistSq = d;
-        bestIdx = i;
-      }
-    }
-  }
-
-  return bestIdx;
+  const grid = spatialGrid || getOrCreateSpatialGrid(points, 22);
+  const gx = Math.min(grid.cols - 1, Math.max(0, Math.floor(x / grid.cellSize)));
+  const gy = Math.min(grid.rows - 1, Math.max(0, Math.floor(y / grid.cellSize)));
+  return grid.cellLookup[gy * grid.cols + gx];
 }
 
 /**
  * Interpoluje wektor prędkości (u, v) w dowolnym punkcie (x, y) mapy
- * z wykorzystaniem ważenia odwrotnością kwadratu odległości w otoczeniu $O(1)$.
- *
- * @param x Współrzędna X punktu zapytania
- * @param y Współrzędna Y punktu zapytania
- * @param fieldU Tablica składowych U
- * @param fieldV Tablica składowych V
- * @param points Punkty siatki
- * @param searchRadiusPx Maksymalny promień poszukiwania w pikselach (domyślnie 50px)
- * @returns [interpU, interpV] interpolowany wektor prędkości
+ * z wykorzystaniem ważenia odwrotnością kwadratu odległości w otoczeniu O(1).
  */
 export function interpolateVector(
   x: number,
@@ -296,7 +247,7 @@ export function interpolateVector(
   let sumWeight = 0;
   const maxDistSq = searchRadiusPx * searchRadiusPx;
 
-  const sGrid = getOrCreateSpatialGrid(points, Math.max(searchRadiusPx, 40));
+  const sGrid = getOrCreateSpatialGrid(points, 40);
   const { cellSize, cols, rows, buckets } = sGrid;
 
   const centerCol = Math.floor(x / cellSize);
@@ -310,6 +261,7 @@ export function interpolateVector(
   for (let r = minR; r <= maxR; r++) {
     for (let c = minC; c <= maxC; c++) {
       const bucket = buckets[r * cols + c];
+      if (!bucket) continue;
       for (let k = 0; k < bucket.length; k++) {
         const i = bucket[k];
         const [px, py] = points[i];
@@ -339,20 +291,7 @@ export function interpolateVector(
 }
 
 /**
- * Całkuje trajektorię linii prądu (wstęgi) metodą Runge-Kutta 2-go rzędu (RK2 Midpoint).
- * Przerywa całkowanie przy napotkaniu zbyt ostrego zakrętu, wyjechaniu poza granice mapy
- * lub gdy prędkość przepływu spadnie poniżej progu ciszy.
- *
- * @param x0 Początkowa współrzędna X
- * @param y0 Początkowa współrzędna Y
- * @param fieldU Składowe U pola wektorowego
- * @param fieldV Składowe V pola wektorowego
- * @param points Punkty siatki
- * @param steps Maksymalna liczba kroków całkowania (domyślnie 6)
- * @param stepSize Długość kroku całkowania w pikselach (domyślnie 8)
- * @param maxAngleDeg Maksymalny dopuszczalny kąt skrętu w stopniach (domyślnie 45°)
- * @param mapBounds Opcjonalne granice [width, height] do zatrzymania na krawędzi mapy
- * @returns Tablica kolejnych punktów [x, y] tworzących gładką wstęgę
+ * Całkuje trajektorię linii prądu metodą Runge-Kutta 2-go rzędu (RK2 Midpoint).
  */
 export function traceStreamline(
   x0: number,
@@ -365,94 +304,48 @@ export function traceStreamline(
   maxAngleDeg = 45,
   mapBounds?: [number, number]
 ): [number, number][] {
-  const path: [number, number][] = [[x0, y0]];
-  let currX = x0;
-  let currY = y0;
+  const trajectory: [number, number][] = [[x0, y0]];
+  let curX = x0;
+  let curY = y0;
   let prevAngle: number | null = null;
-
   const maxAngleRad = (maxAngleDeg * Math.PI) / 180;
-  const boundW = mapBounds ? mapBounds[0] : (globalThis as any).graphWidth || 10000;
-  const boundH = mapBounds ? mapBounds[1] : (globalThis as any).graphHeight || 10000;
+
+  const [maxX, maxY] = mapBounds || [Infinity, Infinity];
 
   for (let s = 0; s < steps; s++) {
-    // Sprawdź granice mapy
-    if (currX < 0 || currX > boundW || currY < 0 || currY > boundH) {
-      break;
-    }
-
-    // Krok 1 (Euler)
-    const [u1, v1] = interpolateVector(currX, currY, fieldU, fieldV, points);
+    const [u1, v1] = interpolateVector(curX, curY, fieldU, fieldV, points);
     const speed1 = Math.sqrt(u1 * u1 + v1 * v1);
     if (speed1 < 0.1) break;
 
-    const angle1 = Math.atan2(v1, u1);
-    if (prevAngle !== null) {
-      let angleDiff = Math.abs(angle1 - prevAngle);
-      if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
-      if (angleDiff > maxAngleRad) break; // Zbyt gwałtowny zakręt
-    }
-
-    // Krok pośredni RK2 (Midpoint)
-    const midX = currX + (u1 / speed1) * (stepSize * 0.5);
-    const midY = currY + (v1 / speed1) * (stepSize * 0.5);
-
-    if (midX < 0 || midX > boundW || midY < 0 || midY > boundH) {
-      break;
-    }
+    const midX = curX + (u1 / speed1) * (stepSize * 0.5);
+    const midY = curY + (v1 / speed1) * (stepSize * 0.5);
 
     const [u2, v2] = interpolateVector(midX, midY, fieldU, fieldV, points);
     const speed2 = Math.sqrt(u2 * u2 + v2 * v2);
     if (speed2 < 0.1) break;
 
-    const angle2 = Math.atan2(v2, u2);
+    const curAngle = Math.atan2(v2, u2);
     if (prevAngle !== null) {
-      let angleDiff2 = Math.abs(angle2 - prevAngle);
-      if (angleDiff2 > Math.PI) angleDiff2 = 2 * Math.PI - angleDiff2;
-      if (angleDiff2 > maxAngleRad) break;
+      let angleDiff = Math.abs(curAngle - prevAngle);
+      if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+      if (angleDiff > maxAngleRad) break;
     }
+    prevAngle = curAngle;
 
-    // Krok finalny RK2
-    currX += (u2 / speed2) * stepSize;
-    currY += (v2 / speed2) * stepSize;
+    const nextX = curX + (u2 / speed2) * stepSize;
+    const nextY = curY + (v2 / speed2) * stepSize;
 
-    if (currX < 0 || currX > boundW || currY < 0 || currY > boundH) {
+    if (nextX < 0 || nextX > maxX || nextY < 0 || nextY > maxY) {
+      const clampedX = Math.max(0, Math.min(maxX, nextX));
+      const clampedY = Math.max(0, Math.min(maxY, nextY));
+      trajectory.push([clampedX, clampedY]);
       break;
     }
 
-    path.push([currX, currY]);
-    prevAngle = angle2;
+    trajectory.push([nextX, nextY]);
+    curX = nextX;
+    curY = nextY;
   }
 
-  return path;
-}
-
-/**
- * Wygładza pole skalarne na grafie Voronoi metodą relaksacji Laplacjańskiej.
- *
- * @param field Tablica wartości skalaru (modyfikowana in-place)
- * @param neighbors Tablica sąsiadów dla każdej komórki
- * @param alpha Współczynnik dyfuzji (0.0 = brak zmian, 1.0 = całkowite uśrednienie z sąsiadami)
- * @param passes Liczba kolejnych iteracji wygładzania (domyślnie 1)
- */
-export function laplacianSmooth(field: Float32Array, neighbors: number[][], alpha = 0.3, passes = 1): void {
-  const n = field.length;
-  const temp = new Float32Array(n);
-
-  for (let p = 0; p < passes; p++) {
-    for (let i = 0; i < n; i++) {
-      const nb = neighbors[i];
-      if (!nb || nb.length === 0) {
-        temp[i] = field[i];
-        continue;
-      }
-
-      let sumVal = 0;
-      for (let j = 0; j < nb.length; j++) {
-        sumVal += field[nb[j]];
-      }
-      const meanVal = sumVal / nb.length;
-      temp[i] = (1 - alpha) * field[i] + alpha * meanVal;
-    }
-    field.set(temp);
-  }
+  return trajectory;
 }

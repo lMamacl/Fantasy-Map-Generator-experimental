@@ -3,8 +3,8 @@
  *
  * Oferuje renderowanie:
  *   - Pola ciśnienia i izobar (`drawPressure`, `removePressure`)
- *   - Wektorowych wstęg wiatru ze spójnymi grotami (`drawWinds`, `removeWinds`)
- *   - Wstęg cyrkulacji oceanicznej (`drawOceanCurrents`, `removeOceanCurrents`)
+ *   - Wektorowych wstęg wiatru z poświatą (`drawWinds`, `removeWinds`)
+ *   - Podwójnych wstęg cyrkulacji oceanicznej (`drawOceanCurrents`, `removeOceanCurrents`)
  *   - Dynamicznej animacji cząstek 60 FPS (`drawFlowAnimation`, `removeFlowAnimation`)
  *
  * @module renderers/aero-hydro/draw-aero-hydro
@@ -17,10 +17,10 @@ import { StreamlineRenderer } from "@/renderers/aero-hydro/streamline-renderer";
 export { drawPressure, removePressure };
 
 export function getSpeedColor(speed: number): string {
-  if (speed < 2.5) return "#0284c7"; // błękit
-  if (speed < 5.0) return "#06b6d4"; // cyjan
-  if (speed < 8.0) return "#10b981"; // szmaragd
-  if (speed < 12.0) return "#f59e0b"; // złoto
+  if (speed < 3.5) return "#0284c7"; // błękit
+  if (speed < 7.5) return "#06b6d4"; // cyjan
+  if (speed < 12.0) return "#10b981"; // szmaragd
+  if (speed < 18.0) return "#facc15"; // złoto
   return "#ef4444"; // cynober
 }
 
@@ -35,25 +35,29 @@ function ensureDefs(): SVGDefsElement | null {
   return defs;
 }
 
-function ensureMarkers(): void {
+function ensureFilters(): void {
   const defs = ensureDefs();
-  if (!defs || defs.querySelector("#aero-wind-arrow")) return;
+  if (!defs || defs.querySelector("#aero-glow-filter")) return;
 
-  const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-  marker.setAttribute("id", "aero-wind-arrow");
-  marker.setAttribute("viewBox", "0 0 10 10");
-  marker.setAttribute("refX", "6");
-  marker.setAttribute("refY", "5");
-  marker.setAttribute("markerWidth", "6");
-  marker.setAttribute("markerHeight", "6");
-  marker.setAttribute("orient", "auto-start-reverse");
+  const filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+  filter.setAttribute("id", "aero-glow-filter");
+  filter.setAttribute("x", "-20%");
+  filter.setAttribute("y", "-20%");
+  filter.setAttribute("width", "140%");
+  filter.setAttribute("height", "140%");
 
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M 0 1.5 L 8 5 L 0 8.5 z");
-  path.setAttribute("fill", "context-stroke");
-  marker.appendChild(path);
+  const blur = document.createElementNS("http://www.w3.org/2000/svg", "feGaussianBlur");
+  blur.setAttribute("stdDeviation", "2.2");
+  blur.setAttribute("result", "blur");
+  filter.appendChild(blur);
 
-  defs.appendChild(marker);
+  const comp = document.createElementNS("http://www.w3.org/2000/svg", "feComposite");
+  comp.setAttribute("in", "SourceGraphic");
+  comp.setAttribute("in2", "blur");
+  comp.setAttribute("operator", "over");
+  filter.appendChild(comp);
+
+  defs.appendChild(filter);
 }
 
 function getOrCreateGroup(id: string): SVGGElement | null {
@@ -70,10 +74,10 @@ function getOrCreateGroup(id: string): SVGGElement | null {
 }
 
 /**
- * Rysuje wektorowe wstęgi wiatru 2D.
+ * Rysuje wektorowe wstęgi wiatru 2D z poświatą.
  */
 export function drawWinds(): void {
-  ensureMarkers();
+  ensureFilters();
   const g = getOrCreateGroup("winds");
   if (!g) return;
 
@@ -86,16 +90,15 @@ export function drawWinds(): void {
   for (let i = 0; i < streamlines.length; i++) {
     const line = streamlines[i];
     const color = getSpeedColor(line.avgSpeed);
-    const strokeWidth = Math.min(Math.max(line.avgSpeed * 0.35 + 1.2, 1.4), 3.8);
 
     const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
     pathEl.setAttribute("d", line.svgPath);
     pathEl.setAttribute("fill", "none");
     pathEl.setAttribute("stroke", color);
-    pathEl.setAttribute("stroke-width", strokeWidth.toFixed(1));
+    pathEl.setAttribute("stroke-width", "2.4");
     pathEl.setAttribute("stroke-linecap", "round");
-    pathEl.setAttribute("stroke-opacity", "0.85");
-    pathEl.setAttribute("marker-end", "url(#aero-wind-arrow)");
+    pathEl.setAttribute("opacity", "0.78");
+    pathEl.setAttribute("filter", "url(#aero-glow-filter)");
     linesGroup.appendChild(pathEl);
   }
 
@@ -108,10 +111,9 @@ export function removeWinds(): void {
 }
 
 /**
- * Rysuje wstęgi cyrkulacji oceanicznej.
+ * Rysuje podwójne wstęgi cyrkulacji oceanicznej (złoty rdzeń + błękitna poświata).
  */
 export function drawOceanCurrents(): void {
-  ensureMarkers();
   const g = getOrCreateGroup("oceanCurrents");
   if (!g) return;
 
@@ -123,18 +125,26 @@ export function drawOceanCurrents(): void {
 
   for (let i = 0; i < streamlines.length; i++) {
     const line = streamlines[i];
-    const color = getSpeedColor(line.avgSpeed);
-    const strokeWidth = Math.min(Math.max(line.avgSpeed * 0.5 + 1.4, 1.8), 4.2);
 
-    const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    pathEl.setAttribute("d", line.svgPath);
-    pathEl.setAttribute("fill", "none");
-    pathEl.setAttribute("stroke", color);
-    pathEl.setAttribute("stroke-width", strokeWidth.toFixed(1));
-    pathEl.setAttribute("stroke-linecap", "round");
-    pathEl.setAttribute("stroke-opacity", "0.9");
-    pathEl.setAttribute("marker-end", "url(#aero-wind-arrow)");
-    currentsGroup.appendChild(pathEl);
+    // Szeroka zewnętrzna poświata
+    const haloEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    haloEl.setAttribute("d", line.svgPath);
+    haloEl.setAttribute("fill", "none");
+    haloEl.setAttribute("stroke", "#0284c7");
+    haloEl.setAttribute("stroke-width", "7.5");
+    haloEl.setAttribute("stroke-linecap", "round");
+    haloEl.setAttribute("opacity", "0.4");
+    currentsGroup.appendChild(haloEl);
+
+    // Wyrazisty rdzeń
+    const coreEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    coreEl.setAttribute("d", line.svgPath);
+    coreEl.setAttribute("fill", "none");
+    coreEl.setAttribute("stroke", "#facc15");
+    coreEl.setAttribute("stroke-width", "3.4");
+    coreEl.setAttribute("stroke-linecap", "round");
+    coreEl.setAttribute("opacity", "0.9");
+    currentsGroup.appendChild(coreEl);
   }
 
   g.appendChild(currentsGroup);
@@ -146,30 +156,32 @@ export function removeOceanCurrents(): void {
 }
 
 /**
- * Uruchamia animację cząstek Canvas 2D 60 FPS.
+ * Uruchamia animację cząstek Canvas 2D 60 FPS nałożoną na widok mapy.
  */
 export function drawFlowAnimation(): void {
   let canvas = document.getElementById("aeroHydroParticleCanvas") as HTMLCanvasElement;
   if (!canvas) {
     canvas = document.createElement("canvas");
     canvas.id = "aeroHydroParticleCanvas";
-    const graphWidth = (globalThis as any).graphWidth || 1000;
-    const graphHeight = (globalThis as any).graphHeight || 1000;
-    canvas.width = graphWidth;
-    canvas.height = graphHeight;
-    canvas.style.position = "absolute";
+    canvas.style.position = "fixed";
     canvas.style.top = "0";
     canvas.style.left = "0";
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
+    canvas.style.width = "100vw";
+    canvas.style.height = "100vh";
     canvas.style.pointerEvents = "none";
-    canvas.style.zIndex = "10";
 
-    const container = document.getElementById("map") || document.body;
-    container.appendChild(canvas);
+    const optionsContainer = document.getElementById("optionsContainer");
+    if (optionsContainer && optionsContainer.parentNode) {
+      optionsContainer.parentNode.insertBefore(canvas, optionsContainer);
+    } else {
+      document.body.appendChild(canvas);
+    }
   }
 
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
   canvas.style.display = "block";
+
   ParticleAnimator.init(canvas);
   ParticleAnimator.start();
 }
