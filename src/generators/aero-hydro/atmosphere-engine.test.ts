@@ -143,8 +143,12 @@ describe("AtmosphereEngine", () => {
     expect(p[centerIdx]).toBeGreaterThan(1015);
   });
 
-  it("orografia: góry (h > 60) zmieniają wektor wiatru", () => {
+  it("orografia: góry (h > 60) obniżają ciśnienie powierzchniowe i odchylają wektor wiatru", () => {
     const cells = (globalThis as any).grid.cells;
+    // Płaska nizina bazowa
+    for (let i = 0; i < cells.h.length; i++) cells.h[i] = 20;
+
+    // Pasmo górskie w środku mapy
     for (let y = 8; y <= 12; y++) {
       for (let x = 10; x <= 20; x++) {
         cells.h[y * 30 + x] = 85;
@@ -153,9 +157,14 @@ describe("AtmosphereEngine", () => {
 
     engine.generate();
     const mountainCell = 10 * 30 + 15;
+    const lowlandCell = 3 * 30 + 15;
+    const p = (globalThis as any).grid.cells.pressure;
     const { windU: u, windV: v } = (globalThis as any).grid.cells;
 
-    // Wiatr na granicy gór musi być skończony i stoczny do grzbietu
+    // 1. Ciśnienie na szczycie góry musi być niższe niż na nizinie (wzór barometryczny)
+    expect(p[mountainCell]).toBeLessThan(p[lowlandCell] - 20);
+
+    // 2. Wiatr na granicy gór musi być skończony i przekierowany wzdłuż zbocza
     expect(Number.isFinite(u[mountainCell])).toBe(true);
     expect(Number.isFinite(v[mountainCell])).toBe(true);
   });

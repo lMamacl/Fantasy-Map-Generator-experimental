@@ -4,10 +4,13 @@
  * Generuje 2D pole ciśnienia barycznego P(x,y) oraz wektory wiatru metodą
  * Green-Gauss FVM z regularyzacją Coriolisa, tarciem przyziemnym i orografią.
  *
- * Integracja z FMG:
- *   - `options.winds[0..5]` — 6 kątów wiatru w strefach 30° od biegunów do równika
- *     traktowane jako "hint" modyfikujący strefowy gradient ciśnienia
- *   - Centra baryczne jako parametryzowalne perturbacje do edycji
+ * Reakcja na rzeźbę terenu (orografię):
+ *   - Ciśnienie powierzchniowe spada z wysokością n.p.m. wg wzoru barometrycznego.
+ *   - Dynamiczne spiętrzenie nawietrzne (windward ridge: +ciśnienie przed granią).
+ *   - Bruzda zawietrzna (lee trough: -ciśnienie za granią).
+ *   - Mechaniczna blokada orograficzna: wiatr omija góry wzdłuż poziomic/dolin
+ *     zamiast wiać prosto w litą ścianę skalną.
+ *   - Efekt Venturiego / Gap Winds: przyspieszenie w przełęczach i wąskich gardłach.
  *
  * @module generators/aero-hydro/atmosphere-engine
  */
@@ -25,14 +28,16 @@ const CROSS_ISOBAR_SCALE = 24;
 const LAND_THERMAL_PRESSURE = -3.5;
 /** Perturbacja termiczna oceanu — stabilniejsze ciśnienie [hPa] */
 const OCEAN_THERMAL_PRESSURE = 1.5;
+/** Spadek ciśnienia powierzchniowego na jednostkę wysokości terenu [hPa / unit] */
+const ALTITUDE_PRESSURE_LAPSE = 0.75;
 
 /**
  * Domyślne kierunki wiatrów na Ziemi (kąty FMG: 0°=N, 90°=E, 180°=S, 270°=W):
- * Tier 0 (60-90°N): Polar Easterlies → 45° (NE → z NE)
- * Tier 1 (30-60°N): Westerlies → 225° (SW → z SW)
- * Tier 2 (0-30°N): Trade Winds NE → 45° (NE → z NE)
- * Tier 3 (0-30°S): Trade Winds SE → 315° (NW → z NW, odwrócone Coriolisem)
- * Tier 4 (30-60°S): Westerlies → 135° (SE → z SE)
+ * Tier 0 (60-90°N): Polar Easterlies → 45° (NE)
+ * Tier 1 (30-60°N): Westerlies → 225° (SW)
+ * Tier 2 (0-30°N): Trade Winds NE → 45° (NE)
+ * Tier 3 (0-30°S): Trade Winds SE → 315° (NW)
+ * Tier 4 (30-60°S): Westerlies → 135° (SE)
  * Tier 5 (60-90°S): Polar Easterlies → 315° (NW)
  */
 const DEFAULT_WIND_ANGLES = [45, 225, 45, 315, 135, 315];
@@ -90,13 +95,14 @@ export class AtmosphereEngineModule {
     const kmPerCell = Math.max(gridCellsToKm(1), 0.1);
     const isLand = (i: number) => cells.h[i] >= 20;
 
-    // ─── 2. Ciśnienie bazowe, centra baryczne i wind hints ───────────────
+    // ─── 2. Ciśnienie bazowe, orograficzne, centra baryczne i wind hints ───
     for (let i = 0; i < n; i++) {
       const [x, y] = points[i];
       const lat = mapCoordinates.latN - (y / graphHeight) * mapCoordinates.latT;
       const absLat = Math.abs(lat);
+      const h_i = cells.h[i];
 
-      // 2a. Profil strefowy [hPa]
+      // 2a. Profil strefowy na poziomie morza [hPa]
       const pZonal = this.calculateZonalPressure(absLat, config.zonalPressureHPa);
 
       // 2b. Perturbacja termiczna ląd ↔ morze [hPa]
@@ -108,15 +114,20 @@ export class AtmosphereEngineModule {
         pThermal = OCEAN_THERMAL_PRESSURE;
       }
 
-      // 2c. Wind hint z options.winds[] — modyfikacja ciśnienia strefowego
-      // Kąt wiatru w FMG: 0°=N, 90°=E, 180°=S, 270°=W
-      // Odchylenie od domyślnego kąta → gradient ciśnienia E-W
+      // 2c. Wpływ wysokości terenu (wzór barometryczny powierzchniowy)
+      // Na szczytach (h=85) ciśnienie powierzchniowe spada o ~45-55 hPa
+      let pAltitude = 0;
+      if (h_i >= 20) {
+        pAltitude = -((h_i - 20) ** 1.05) * ALTITUDE_PRESSURE_LAPSE;
+      }
+
+      // 2d. Wind hint z options.winds[] — modyfikacja ciśnienia strefowego
       const windTier = this.getWindTier(lat);
       const userAngle = winds[windTier] ?? DEFAULT_WIND_ANGLES[windTier];
       const defaultAngle = DEFAULT_WIND_ANGLES[windTier];
       const pWindHint = this.calculateWindHintPressure(userAngle, defaultAngle, x, y, graphWidth, graphHeight);
 
-      // 2d. Nadkład centrów barycznych
+      // 2e. Nadkład centrów barycznych
       let pCenters = 0;
       if (config.baricCenters?.length) {
         for (const c of config.baricCenters) {
@@ -135,13 +146,13 @@ export class AtmosphereEngineModule {
         }
       }
 
-      pressure[i] = pZonal + pThermal + pWindHint + pCenters;
+      pressure[i] = pZonal + pThermal + pAltitude + pWindHint + pCenters;
     }
 
-    // 3. Wygładzenie Laplacjanem
-    laplacianSmooth(pressure, cells.c, 0.05, 1);
+    // 3. Wygładzenie Laplacjanem (delikatne, zachowujące ostre grzbiety)
+    laplacianSmooth(pressure, cells.c, 0.04, 1);
 
-    // ─── 4. Wektory wiatru (FVM Green-Gauss + Coriolis + Friction + Orografia) ───
+    // ─── 4. Wektory wiatru (FVM Green-Gauss + Coriolis + Orografia) ───
     const omega = 7.2921e-5; // prędkość kątowa Ziemi [rad/s]
 
     for (let i = 0; i < n; i++) {
@@ -150,7 +161,7 @@ export class AtmosphereEngineModule {
       const p_i = pressure[i];
       const h_i = cells.h[i];
 
-      // Gradient ciśnienia (Green-Gauss na grafie Voronoi)
+      // Gradient ciśnienia i wysokości (Green-Gauss na komórce Voronoi)
       let gradX = 0;
       let gradY = 0;
       let gradHx = 0;
@@ -173,7 +184,7 @@ export class AtmosphereEngineModule {
       gradHx /= nLen;
       gradHy /= nLen;
 
-      // Parametr Coriolisa z floor (zapobiega dzieleniu przez 0 na równiku)
+      // Parametr Coriolisa
       const lat = mapCoordinates.latN - (y / graphHeight) * mapCoordinates.latT;
       const latRad = (lat * Math.PI) / 180;
       const fCoriolis = Math.max(Math.abs(2 * omega * Math.sin(latRad)), config.coriolisFloor);
@@ -182,49 +193,76 @@ export class AtmosphereEngineModule {
 
       const isL = h_i >= 20;
 
-      // Fizyka podłoża: ocean = mniejsze tarcie (szybszy wiatr), ląd = większe tarcie
+      // Współczynniki oporu podłoża
       const surfaceSpeedFactor = isL ? 0.65 : 1.25;
-      // Składowa cross-isobar: na lądzie silniejsza (więcej tarcia → więcej przeskoku)
       const crossIsobarFactor = isL ? 0.38 : 0.1;
 
-      // Wiatr geostroficzny + składowa ageostrof. (cross-isobar flow z tarcia)
+      // Wiatr bazowy z gradientu ciśnienia i Coriolisa
       const geoScale = GEOSTROPHIC_SCALE * coriolisFactor;
       let u = (-gradY * geoScale * latSign + gradX * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
       let v = (gradX * geoScale * latSign + gradY * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
 
-      // Opływanie orograficzne (barrier jet — kierowanie wzdłuż poziomicy grzbietu)
-      if (h_i > 45) {
-        const hGradLen = Math.hypot(gradHx, gradHy);
-        if (hGradLen > 0.01) {
-          const normHx = gradHx / hGradLen;
-          const normHy = gradHy / hGradLen;
-          const slopeDot = u * normHx + v * normHy;
+      // ─── 4b. Mechaniczna blokada i opływanie grzbietów górskich ───────
+      // Sprawdź czy wiatr uderza w barierę górską
+      const hGradLen = Math.hypot(gradHx, gradHy);
+      if (hGradLen > 0.005) {
+        const normHx = gradHx / hGradLen; // wektor normalny wskazujący W GÓRĘ stoku
+        const normHy = gradHy / hGradLen;
 
-          if (slopeDot > 0) {
-            let tangX = -normHy;
-            let tangY = normHx;
-            if (u * tangX + v * tangY < 0) {
-              tangX = -tangX;
-              tangY = -tangY;
-            }
+        // Iloczyn skalarny: dodatni = wiatr wieje prosto W GÓRĘ zbocza
+        const uphillDot = u * normHx + v * normHy;
 
-            const currentSpeed = Math.hypot(u, v);
-            const elevationFactor = Math.min((h_i - 40) / 50, 0.7);
-            const blend = elevationFactor * Math.min(slopeDot / Math.max(currentSpeed, 0.1), 1.0);
+        // Wektor styczny do poziomicy grani (kierunek opływu wzdłuż doliny)
+        let tangX = -normHy;
+        let tangY = normHx;
+        // Wybierz zwrot zgodny z kierunkiem wiatru
+        if (u * tangX + v * tangY < 0) {
+          tangX = -tangX;
+          tangY = -tangY;
+        }
 
-            u = u * (1 - blend) + tangX * currentSpeed * blend;
-            v = v * (1 - blend) + tangY * currentSpeed * blend;
+        const currentSpeed = Math.hypot(u, v);
+
+        if (uphillDot > 0) {
+          // Wiatr uderza w ścianę: im wyższy grzbiet, tym silniejsza blokada i skręt wzdłuż poziomicy
+          const maxNeighborH = Math.max(...neigh.map((idx: number) => cells.h[idx]));
+          const barrierSeverity = Math.min(Math.max((maxNeighborH - 30) / 45, 0), 1.0);
+
+          // Ułamek energii przekierowany wzdłuż zbocza (Ridge Deflection)
+          const deflectFactor = barrierSeverity * Math.min(uphillDot / Math.max(currentSpeed, 0.1), 1.0);
+
+          // Składowa prostopadła do ściany jest tłumiona, składowa wzdłużna jest wzmacniana
+          u = u * (1.0 - deflectFactor * 0.85) + tangX * currentSpeed * deflectFactor;
+          v = v * (1.0 - deflectFactor * 0.85) + tangY * currentSpeed * deflectFactor;
+        }
+
+        // Efekt Venturiego w przełęczach / obniżeniach terenu między szczytami
+        if (h_i >= 30 && h_i < 65) {
+          let higherNeighCount = 0;
+          for (let k = 0; k < neigh.length; k++) {
+            if (cells.h[neigh[k]] > h_i + 15) higherNeighCount++;
+          }
+          if (higherNeighCount >= 2) {
+            // Przełęcz górska: przyspieszenie przepływu
+            u *= 1.35;
+            v *= 1.35;
           }
         }
+      }
+
+      // Wyciszenie wiatru na stromych, litych szczytach (h > 75)
+      if (h_i > 75) {
+        u *= 0.75;
+        v *= 0.75;
       }
 
       windU[i] = u;
       windV[i] = v;
     }
 
-    // 5. Wygładzenie pola wektorowego (płynny opływ masywów górskich i dolin)
-    laplacianSmooth(windU, cells.c, 0.12, 1);
-    laplacianSmooth(windV, cells.c, 0.12, 1);
+    // 5. Delikatne wygładzenie zachowujące opływ orograficzny
+    laplacianSmooth(windU, cells.c, 0.06, 1);
+    laplacianSmooth(windV, cells.c, 0.06, 1);
 
     for (let i = 0; i < n; i++) {
       windSpeed[i] = Math.hypot(windU[i], windV[i]);
@@ -233,11 +271,6 @@ export class AtmosphereEngineModule {
 
   // ─── Pomocnicze ─────────────────────────────────────────────────────
 
-  /**
-   * Wyznacza strefę wiatrową (tier 0–5) na podstawie szerokości geograficznej.
-   * Tier 0: 60-90°N, Tier 1: 30-60°N, Tier 2: 0-30°N,
-   * Tier 3: 0-30°S, Tier 4: 30-60°S, Tier 5: 60-90°S.
-   */
   getWindTier(lat: number): number {
     if (lat >= 60) return 0;
     if (lat >= 30) return 1;
@@ -247,13 +280,6 @@ export class AtmosphereEngineModule {
     return 5;
   }
 
-  /**
-   * Oblicza modyfikację ciśnienia na podstawie odchylenia kąta wiatru użytkownika
-   * od domyślnego. Jeśli użytkownik ustawił wiatr z innego kierunku niż domyślny,
-   * generujemy gradient ciśnienia wymuszający ten kierunek.
-   *
-   * Kąt FMG: 0°=N, 90°=E, 180°=S, 270°=W (skąd wieje wiatr).
-   */
   private calculateWindHintPressure(
     userAngle: number,
     defaultAngle: number,
@@ -262,34 +288,20 @@ export class AtmosphereEngineModule {
     graphWidth: number,
     graphHeight: number
   ): number {
-    // Brak modyfikacji jeśli kąt jest domyślny
-    const angleDiff = ((userAngle - defaultAngle + 540) % 360) - 180; // [-180, 180]
+    const angleDiff = ((userAngle - defaultAngle + 540) % 360) - 180;
     if (Math.abs(angleDiff) < 5) return 0;
 
-    // Kąt wiatru → kierunek skąd wieje → gradient ciśnienia
-    // Wiatr z kąta A oznacza wyższe ciśnienie po stronie "skąd" i niższe "dokąd"
     const userRad = (userAngle * Math.PI) / 180;
+    const fromX = -Math.sin(userRad);
+    const fromY = Math.cos(userRad);
 
-    // Wektor "skąd wieje" wiatr w układzie ekranowym (y w dół)
-    const fromX = -Math.sin(userRad); // na lewo od kierunku = wyższe ciśnienie
-    const fromY = Math.cos(userRad); // y w dół w ekranie
-
-    // Pozycja relatywna na mapie [-1, 1]
     const relX = (x / graphWidth) * 2 - 1;
     const relY = (y / graphHeight) * 2 - 1;
-
-    // Rzut pozycji na kierunek "skąd wieje" → ciśnienie rośnie w tym kierunku
     const projection = relX * fromX + relY * fromY;
-
-    // Siła modyfikacji skalowana odchyleniem od domyślnego
     const strength = WIND_HINT_STRENGTH * Math.min(Math.abs(angleDiff) / 180, 1.0);
     return projection * strength;
   }
 
-  /**
-   * Ciśnienie strefowe P_zonal(φ) interpolowane między 4 punktami:
-   *   ITCZ (0°) → Subtropical High (30°) → Subpolar Low (60°) → Polar High (90°)
-   */
   calculateZonalPressure(absLat: number, zonal: [number, number, number, number]): number {
     const [pITCZ, pHigh, pLow, pPolar] = zonal;
 
@@ -310,10 +322,6 @@ export class AtmosphereEngineModule {
     }
   }
 
-  /**
-   * Automatycznie generuje fizycznie spójny układ 3–4 centrów barycznych
-   * na podstawie szerokości geograficznych i rozkładu lądów/oceanów.
-   */
   autoGenerateBaricCenters(): BaricCenter[] {
     const grid = (globalThis as any).grid;
     const graphWidth = (globalThis as any).graphWidth ?? 1000;
@@ -354,7 +362,6 @@ export class AtmosphereEngineModule {
       }
     ];
 
-    // Detekcja lądu pod kątem centrum termicznego
     if (grid?.cells?.h && grid?.points) {
       let landX = 0;
       let landY = 0;
