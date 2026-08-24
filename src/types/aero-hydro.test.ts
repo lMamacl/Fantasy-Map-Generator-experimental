@@ -90,14 +90,15 @@ describe("AeroHydro type definitions", () => {
 
   it("MoistureConfig default ma dodatnie i zbalansowane parametry fizyczne", () => {
     const config = defaultMoistureConfig();
-    expect(config.minPrecipMmYr).toBeGreaterThan(0);
-    expect(config.advectionPasses).toBeGreaterThan(0);
-    expect(config.advectionPasses).toBeLessThanOrEqual(20);
+    expect(config.iterations).toBeGreaterThan(0);
+    expect(config.iterations).toBeLessThanOrEqual(20);
     expect(config.diffusionCoeff).toBeGreaterThan(0);
     expect(config.diffusionCoeff).toBeLessThanOrEqual(1);
-    expect(config.advectionRate).toBeGreaterThan(0);
-    expect(config.orographicCondensationRate).toBeGreaterThan(0);
-    expect(config.baseRainoutRate).toBeGreaterThan(0);
+    expect(config.advectionStrength).toBeGreaterThan(0);
+    expect(config.condensationRate).toBeGreaterThan(0);
+    expect(config.orographicBlockRate).toBeGreaterThan(0);
+    expect(config.oceanEvapScale).toBeGreaterThan(0);
+    expect(config.capacityScale).toBeGreaterThan(0);
     expect(config.foehnHeatingRate).toBeGreaterThan(0);
   });
 });

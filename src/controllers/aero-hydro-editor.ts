@@ -3,15 +3,17 @@
  *
  * Umożliwia:
  *   - Edycję parametrów ośrodków barycznych (wyże, niże, położenie, ciśnienie, promień)
- *     z automatyczną klasyfikacją typu na podstawie wartości ciśnienia (p >= 1013 hPa -> High, p < 1013 hPa -> Low).
+ *     z automatyczną klasyfikacją typu na podstawie wartości ciśnienia.
+ *   - Automatyczną generację spójnego układu centrów barycznych (⚡ Auto-Generate Centers).
+ *   - Przełączanie widoczności żetonów na mapie oraz regulację prędkości animacji.
  *   - Konfigurację parametrów fizycznych atmosfery, cyrkulacji oceanicznej i wilgoci.
- *   - Wewnętrzne zarządzanie warstwami wizualizacji w oknie edytora z automatyczną aktywacją po wejściu
- *     oraz automatycznym wyłączeniem i wyczyszczeniem nakładek po zamknięciu edytora.
  *
  * @module controllers/aero-hydro-editor
  */
 
 import { AeroHydro } from "@/generators/aero-hydro";
+import { AtmosphereEngine } from "@/generators/aero-hydro/atmosphere-engine";
+import { ParticleAnimator } from "@/renderers/aero-hydro/canvas-particle-animator";
 import {
   drawFlowAnimation,
   drawOceanCurrents,
@@ -20,10 +22,12 @@ import {
   removeOceanCurrents,
   removeWinds
 } from "@/renderers/aero-hydro/draw-aero-hydro";
+import { drawPressure, removePressure } from "@/renderers/aero-hydro/draw-pressure";
 import type { BaricCenter } from "@/types/aero-hydro";
 import { ensureEl } from "../utils";
 
 let isWindsActive = true;
+let isPressureActive = false;
 let isOceanActive = false;
 let isParticlesActive = false;
 
@@ -33,11 +37,12 @@ function showTip(text: string): void {
 }
 
 function closeDialog(id: string): void {
-  // Wyłącz i wyczyść podglądy wizualne po wyjściu z edytora
   removeWinds();
+  removePressure();
   removeOceanCurrents();
   removeFlowAnimation();
   isWindsActive = false;
+  isPressureActive = false;
   isOceanActive = false;
   isParticlesActive = false;
 
@@ -52,13 +57,13 @@ function closeDialog(id: string): void {
 
 function open(): void {
   isWindsActive = true;
+  isPressureActive = false;
   isOceanActive = false;
   isParticlesActive = false;
 
   renderDialog();
   updateInputValues();
 
-  // Automatycznie włącz i narysuj wiatry po wejściu do edytora
   drawWinds();
 
   const g = globalThis as any;
@@ -66,12 +71,13 @@ function open(): void {
     g.$("#aeroHydroEditor").dialog({
       title: "Aero-Hydro Climate & Hydrology Editor",
       resizable: false,
-      width: "minmax(46em, 88vw)",
+      width: "minmax(48em, 90vw)",
       buttons: {
         "Recalculate Climate": () => {
           applyChanges();
           AeroHydro.generate();
           if (isWindsActive) drawWinds();
+          if (isPressureActive) drawPressure();
           if (isOceanActive) drawOceanCurrents();
         },
         Close: () => closeDialog("aeroHydroEditor")
@@ -95,29 +101,46 @@ function renderDialog(): void {
 
 function createDialogHtml(): string {
   const windsPressed = isWindsActive ? "pressed" : "";
+  const pressurePressed = isPressureActive ? "pressed" : "";
   const oceanPressed = isOceanActive ? "pressed" : "";
   const particlesPressed = isParticlesActive ? "pressed" : "";
+
+  const options = (globalThis as any).options || {};
+  const showTokens = options.atmosphere?.showTokens !== false;
 
   return /* html */ `<div id="aeroHydroEditor" class="dialog stable">
     <div style="display: flex; gap: 1.5em; flex-wrap: wrap;">
       
-      <!-- Kolumna 1: Centra baryczne -->
-      <div style="flex: 1.2; min-width: 22em;">
+      <!-- Kolumna 1: Ciśnienie i Centra baryczne -->
+      <div style="flex: 1.3; min-width: 24em;">
         <fieldset>
-          <legend><b>Baric Centers (Atmospheric Pressure)</b></legend>
-          <div id="baricCentersList" style="max-height: 16em; overflow-y: auto; margin-bottom: 0.6em;"></div>
-          <div style="display: flex; gap: 0.5em;">
+          <legend><b>🌀 Atmospheric Pressure & Baric Centers</b></legend>
+          <div id="baricCentersList" style="max-height: 15em; overflow-y: auto; margin-bottom: 0.6em;"></div>
+          
+          <div style="display: flex; gap: 0.6em; align-items: center; flex-wrap: wrap; margin-bottom: 0.6em;">
             <button id="addBaricCenterBtn" class="btn btn-sm" data-tip="Add a new atmospheric pressure center (auto High/Low based on p)">+ Add Baric Center</button>
+            <button id="autoBaricCentersBtn" class="btn btn-sm" data-tip="Auto-generate 3-4 realistic High/Low centers based on latitude and landmass">⚡ Auto-Generate</button>
+            <label style="display: flex; align-items: center; gap: 0.3em; cursor: pointer; font-size: 0.88em;" data-tip="Show or hide interactive draggable H/L tokens on map">
+              <input type="checkbox" id="showTokensCheckbox" ${showTokens ? "checked" : ""} />
+              <span>Show Tokens on Map</span>
+            </label>
           </div>
         </fieldset>
 
         <fieldset style="margin-top: 1em;">
-          <legend><b>Visualization & Map Layers</b></legend>
-          <div style="display: flex; flex-direction: column; gap: 0.4em;">
-            <div style="display: flex; gap: 0.5em; flex-wrap: wrap;">
-              <button id="toggleWindsLayerBtn" class="btn btn-sm ${windsPressed}" data-tip="Toggle 2D Wind Streamlines & Baric Center Markers on map">Wind & Pressure (SVG)</button>
-              <button id="toggleOceanLayerBtn" class="btn btn-sm ${oceanPressed}" data-tip="Toggle Ocean Current Streamlines on map">Ocean Currents (SVG)</button>
-              <button id="toggleParticlesLayerBtn" class="btn btn-sm ${particlesPressed}" data-tip="Toggle 60 FPS animated flow particles overlay (Canvas 2D)">Flow Particles (Canvas)</button>
+          <legend><b>👁️ Map Layers & Animation</b></legend>
+          <div style="display: flex; flex-direction: column; gap: 0.6em;">
+            <div style="display: flex; gap: 0.4em; flex-wrap: wrap;">
+              <button id="toggleWindsLayerBtn" class="btn btn-sm ${windsPressed}" data-tip="Toggle 2D Wind Streamlines (SVG)">Wind & Pressure (SVG)</button>
+              <button id="togglePressureLayerBtn" class="btn btn-sm ${pressurePressed}" data-tip="Toggle Pressure Heatmap (Granat → Zieleń → Złoto)">Pressure Heatmap</button>
+              <button id="toggleOceanLayerBtn" class="btn btn-sm ${oceanPressed}" data-tip="Toggle Ocean Current Streamlines">Ocean Currents (SVG)</button>
+              <button id="toggleParticlesLayerBtn" class="btn btn-sm ${particlesPressed}" data-tip="Toggle 60 FPS animated flow particles">Flow Particles (Canvas)</button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 0.8em; font-size: 0.88em;">
+              <span>Particle Speed:</span>
+              <input id="particleSpeedSlider" type="range" min="0.5" max="3.0" step="0.1" value="1.5" style="flex: 1;" data-tip="Adjust particle flow animation speed" />
+              <span id="particleSpeedLabel">1.5×</span>
             </div>
           </div>
         </fieldset>
@@ -126,7 +149,7 @@ function createDialogHtml(): string {
       <!-- Kolumna 2: Parametry fizyczne -->
       <div style="flex: 1; min-width: 19em;">
         <fieldset>
-          <legend><b>Atmosphere & Ocean Physics</b></legend>
+          <legend><b>💨 Physics & Orography</b></legend>
           <div style="display: flex; flex-direction: column; gap: 0.45em;">
             <label data-tip="Wind stress coupling factor to ocean surface (0.01 - 0.08)">
               <i>Ocean Wind Stress:</i>
@@ -188,7 +211,7 @@ function renderBaricCentersList(): void {
 
   if (centers.length === 0) {
     listEl.innerHTML =
-      "<div style='font-style: italic; color: #888; padding: 0.5em;'>No baric centers defined. Standard zonal base state active.</div>";
+      "<div style='font-style: italic; color: #888; padding: 0.5em;'>No baric centers defined. Click Auto-Generate or + Add Center.</div>";
     return;
   }
 
@@ -200,7 +223,7 @@ function renderBaricCentersList(): void {
     const c = centers[i];
     const isHigh = c.pressureHPa >= 1013;
     c.type = isHigh ? "high" : "low";
-    const badgeColor = isHigh ? "#dc2626" : "#2563eb";
+    const badgeColor = isHigh ? "#3b82f6" : "#ef4444";
     const typeLabel = isHigh ? "H (High)" : "L (Low)";
 
     html += `<tr style="border-bottom: 1px solid #eee;">
@@ -231,9 +254,12 @@ function renderBaricCentersList(): void {
       const badge = document.getElementById(`badge_type_${idx}`);
       if (badge) {
         badge.textContent = isHigh ? "H (High)" : "L (Low)";
-        badge.style.background = isHigh ? "#dc2626" : "#2563eb";
+        badge.style.background = isHigh ? "#3b82f6" : "#ef4444";
       }
+
+      AtmosphereEngine.generate();
       if (isWindsActive) drawWinds();
+      if (isPressureActive) drawPressure();
     });
   });
 
@@ -243,6 +269,9 @@ function renderBaricCentersList(): void {
       const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
       const val = Number((e.currentTarget as HTMLInputElement).value) || 2000;
       centers[idx].radiusKm = val;
+      AtmosphereEngine.generate();
+      if (isWindsActive) drawWinds();
+      if (isPressureActive) drawPressure();
     });
   });
 
@@ -252,7 +281,9 @@ function renderBaricCentersList(): void {
       const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
       const val = Number((e.currentTarget as HTMLInputElement).value) || 0;
       centers[idx].x = val;
+      AtmosphereEngine.generate();
       if (isWindsActive) drawWinds();
+      if (isPressureActive) drawPressure();
     });
   });
 
@@ -262,7 +293,9 @@ function renderBaricCentersList(): void {
       const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
       const val = Number((e.currentTarget as HTMLInputElement).value) || 0;
       centers[idx].y = val;
+      AtmosphereEngine.generate();
       if (isWindsActive) drawWinds();
+      if (isPressureActive) drawPressure();
     });
   });
 
@@ -273,7 +306,9 @@ function renderBaricCentersList(): void {
       const idx = Number((e.currentTarget as HTMLElement).getAttribute("data-index"));
       centers.splice(idx, 1);
       renderBaricCentersList();
+      AtmosphereEngine.generate();
       if (isWindsActive) drawWinds();
+      if (isPressureActive) drawPressure();
     });
   });
 }
@@ -282,6 +317,38 @@ function addListeners(): void {
   const addCenterBtn = document.getElementById("addBaricCenterBtn");
   addCenterBtn?.addEventListener("click", () => {
     addCenter();
+  });
+
+  const autoCentersBtn = document.getElementById("autoBaricCentersBtn");
+  autoCentersBtn?.addEventListener("click", () => {
+    AtmosphereEngine.autoGenerateBaricCenters();
+    AtmosphereEngine.generate();
+    renderBaricCentersList();
+    if (isWindsActive) drawWinds();
+    if (isPressureActive) drawPressure();
+  });
+
+  const showTokensCheckbox = document.getElementById("showTokensCheckbox") as HTMLInputElement;
+  showTokensCheckbox?.addEventListener("change", () => {
+    let options = (globalThis as any).options;
+    if (!options) {
+      options = {};
+      (globalThis as any).options = options;
+    }
+    if (!options.atmosphere) options.atmosphere = {};
+    options.atmosphere.showTokens = showTokensCheckbox.checked;
+    drawPressure();
+  });
+
+  const speedSlider = document.getElementById("particleSpeedSlider") as HTMLInputElement;
+  const speedLabel = document.getElementById("particleSpeedLabel");
+  speedSlider?.addEventListener("input", () => {
+    const val = Number(speedSlider.value) || 1.5;
+    if (speedLabel) speedLabel.textContent = `${val.toFixed(1)}×`;
+    const canvas = document.getElementById("aeroHydroParticleCanvas") as HTMLCanvasElement;
+    if (canvas) {
+      ParticleAnimator.init(canvas, { particleSpeedMultiplier: val });
+    }
   });
 
   const toggleWindsBtn = document.getElementById("toggleWindsLayerBtn");
@@ -293,6 +360,18 @@ function addListeners(): void {
     } else {
       toggleWindsBtn.classList.remove("pressed");
       removeWinds();
+    }
+  });
+
+  const togglePressureBtn = document.getElementById("togglePressureLayerBtn");
+  togglePressureBtn?.addEventListener("click", () => {
+    isPressureActive = !isPressureActive;
+    if (isPressureActive) {
+      togglePressureBtn.classList.add("pressed");
+      drawPressure();
+    } else {
+      togglePressureBtn.classList.remove("pressed");
+      removePressure();
     }
   });
 
@@ -322,35 +401,41 @@ function addListeners(): void {
 }
 
 function addCenter(): void {
-  const g = globalThis as any;
-  if (!g.options) g.options = {};
-  const options = g.options;
-  options.atmosphere = options.atmosphere || {};
-  options.atmosphere.baricCenters = options.atmosphere.baricCenters || [];
+  let options = (globalThis as any).options;
+  if (!options) {
+    options = {};
+    (globalThis as any).options = options;
+  }
+  if (!options.atmosphere) options.atmosphere = {};
+  if (!options.atmosphere.baricCenters) options.atmosphere.baricCenters = [];
 
   const graphWidth = (globalThis as any).graphWidth || 1000;
   const graphHeight = (globalThis as any).graphHeight || 1000;
 
   const newCenter: BaricCenter = {
-    x: Math.round(graphWidth * (0.3 + Math.random() * 0.4)),
-    y: Math.round(graphHeight * (0.3 + Math.random() * 0.4)),
+    x: Math.round(graphWidth * 0.5 + (Math.random() * 200 - 100)),
+    y: Math.round(graphHeight * 0.5 + (Math.random() * 200 - 100)),
     type: "high",
-    pressureHPa: 1030,
-    radiusKm: 2500,
+    pressureHPa: 1025,
+    radiusKm: 1600,
     thermalOrigin: false
   };
 
   options.atmosphere.baricCenters.push(newCenter);
   renderBaricCentersList();
+  AtmosphereEngine.generate();
   if (isWindsActive) drawWinds();
+  if (isPressureActive) drawPressure();
 }
 
 function applyChanges(): void {
-  const g = globalThis as any;
-  if (!g.options) g.options = {};
-  const options = g.options;
-  options.oceanCurrents = options.oceanCurrents || {};
-  options.moisture = options.moisture || {};
+  let options = (globalThis as any).options;
+  if (!options) {
+    options = {};
+    (globalThis as any).options = options;
+  }
+  if (!options.oceanCurrents) options.oceanCurrents = {};
+  if (!options.moisture) options.moisture = {};
 
   const windStressEl = document.getElementById("oceanWindStressInput") as HTMLInputElement;
   if (windStressEl) options.oceanCurrents.windStressFactor = Number(windStressEl.value);
@@ -370,11 +455,8 @@ function applyChanges(): void {
 
 export const AeroHydroEditor = {
   open,
-  closeDialog,
-  renderDialog,
+  close: () => closeDialog("aeroHydroEditor"),
   createDialogHtml,
-  updateInputValues,
   renderBaricCentersList,
-  addCenter,
   applyChanges
 };

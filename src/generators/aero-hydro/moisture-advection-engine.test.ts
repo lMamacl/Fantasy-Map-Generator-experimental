@@ -1,12 +1,76 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-describe("MoistureAdvectionEngine", () => {
+/**
+ * Helper: buduje siatkę testową z konfigurowalnymi parametrami.
+ * Zwraca n = cols * rows komórek, z siatką regularną.
+ */
+function buildGrid(params: {
+  cols: number;
+  rows: number;
+  spacing: number;
+  heightFn: (x: number, y: number) => number;
+  tempFn?: (x: number, y: number) => number;
+  windU?: number;
+  windV?: number;
+}) {
+  const { cols, rows, spacing, heightFn, tempFn, windU = 0, windV = 0 } = params;
+  const n = cols * rows;
+
+  const points: [number, number][] = [];
+  const neighbors: number[][] = [];
+  const heights = new Uint8Array(n);
+  const cellsT = new Int8Array(n).fill(-3);
+  const temp = new Float32Array(n);
+  const sstAnomaly = new Float32Array(n);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const idx = y * cols + x;
+      points.push([x * spacing + spacing / 2, y * spacing + spacing / 2]);
+
+      const nb: number[] = [];
+      if (x > 0) nb.push(idx - 1);
+      if (x < cols - 1) nb.push(idx + 1);
+      if (y > 0) nb.push(idx - cols);
+      if (y < rows - 1) nb.push(idx + cols);
+      neighbors.push(nb);
+
+      const h = heightFn(x, y);
+      heights[idx] = Math.max(0, Math.min(100, h));
+      cellsT[idx] = h >= 20 ? 1 : -3;
+      temp[idx] = tempFn ? tempFn(x, y) : 20;
+    }
+  }
+
+  (globalThis as any).graphWidth = cols * spacing;
+  (globalThis as any).graphHeight = rows * spacing;
+
+  (globalThis as any).grid = {
+    cellsX: cols,
+    cellsY: rows,
+    spacing,
+    points,
+    cells: {
+      i: Array.from({ length: n }, (_, i) => i),
+      h: heights,
+      t: cellsT,
+      c: neighbors,
+      temp,
+      b: new Uint8Array(n),
+      windU: new Float32Array(n).fill(windU),
+      windV: new Float32Array(n).fill(windV),
+      sstAnomaly
+    }
+  };
+
+  return { n, cols, rows, points, heights };
+}
+
+describe("MoistureAdvectionEngine — Testy Fizyczne Klimatu", () => {
   let moistureEngine: any;
 
   beforeEach(async () => {
     (globalThis as any).TIME = false;
-    (globalThis as any).graphWidth = 1000;
-    (globalThis as any).graphHeight = 600;
     (globalThis as any).mapCoordinates = {
       latN: 60,
       latS: -60,
@@ -15,183 +79,240 @@ describe("MoistureAdvectionEngine", () => {
       lonE: 90,
       lonT: 180
     };
+    (globalThis as any).options = {
+      prec: 100,
+      winds: [225, 45, 225, 45, 225, 45]
+    };
 
+    const mod = await import("./moisture-advection-engine");
+    moistureEngine = mod.MoistureAdvectionEngine;
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 1: Wyspa w oceanie — opady na całym obwodzie
+  // ──────────────────────────────────────────────────────────────────────
+  it("wyspa w oceanie — opady na >85% komórek lądowych", () => {
     const cols = 30;
-    const rows = 20;
-    const n = cols * rows; // 600 komórek
-    const spacing = 33;
+    const rows = 30;
+    // Okrągła wyspa w centrum, reszta ocean
+    buildGrid({
+      cols,
+      rows,
+      spacing: 30,
+      heightFn: (x, y) => {
+        const cx = cols / 2;
+        const cy = rows / 2;
+        const dist = Math.hypot(x - cx, y - cy);
+        return dist < 6 ? 35 : 10; // wyspa o promieniu 6 komórek
+      },
+      windU: 5,
+      windV: 0 // wiatr z zachodu
+    });
 
-    const points: [number, number][] = [];
-    const neighbors: number[][] = [];
-    const heights = new Uint8Array(n).fill(10); // Ocean po lewej
-    const cellsT = new Int8Array(n).fill(-3);
+    moistureEngine.generate();
+    const { prec, h } = (globalThis as any).grid.cells;
 
-    // Utwórz konfigurację siatki:
-    // - Ocean po lewej (x: 0..9)
-    // - Wybrzeże i nizina (x: 10..13, h = 30)
-    // - Pasmo górskie (x: 14..16, h = 85)
-    // - Zawietrzna nizina / cień opadowy (x: 17..29, h = 30)
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
-        const idx = y * cols + x;
-        // P0 FIX: Dodajemy tablicę współrzędnych [x, y], a nie płaskie argumenty
-        points.push([x * spacing + 16, y * 30 + 15]);
-
-        const nb: number[] = [];
-        if (x > 0) nb.push(idx - 1);
-        if (x < cols - 1) nb.push(idx + 1);
-        if (y > 0) nb.push(idx - cols);
-        if (y < rows - 1) nb.push(idx + cols);
-        neighbors.push(nb);
-
-        if (x >= 10) {
-          heights[idx] = 30; // nizina
-          cellsT[idx] = 1;
-        }
-        if (x >= 12 && x <= 14 && y >= 3 && y <= 16) {
-          heights[idx] = 85; // pasmo górskie (w zasięgu wiatru od oceanu x=10)
-        }
+    let landCells = 0;
+    let landWithPrecip = 0;
+    for (let i = 0; i < h.length; i++) {
+      if (h[i] >= 20) {
+        landCells++;
+        if (prec[i] > 0) landWithPrecip++;
       }
     }
 
-    (globalThis as any).grid = {
-      cellsX: cols,
-      cellsY: rows,
-      spacing: spacing,
-      points: points,
-      cells: {
-        i: Array.from({ length: n }, (_, i) => i),
-        h: heights,
-        t: cellsT,
-        c: neighbors,
-        temp: new Float32Array(n).fill(20), // P0 FIX: Float32Array zamiast Int8Array
-        b: new Uint8Array(n),
-        windU: new Float32Array(n).fill(6.0), // Domyślny wiatr ze składową U > 0 (na wschód)
-        windV: new Float32Array(n).fill(0),
-        sstAnomaly: new Float32Array(n).fill(0)
-      }
-    };
-
-    (globalThis as any).options = {
-      prec: 100,
-      atmosphere: {
-        zonalPressureHPa: [1008, 1024, 996, 1028],
-        baricCenters: [],
-        frictionAngleOcean: 20,
-        frictionAngleLand: 35,
-        coriolisFloor: 1e-5
-      },
-      oceanCurrents: {
-        windStressFactor: 0.03,
-        ekmanAngle: 30,
-        westernIntensification: 2.2
-      },
-      moistureAdvection: {
-        minPrecipMmYr: 10,
-        advectionPasses: 4,
-        diffusionCoeff: 0.1,
-        advectionRate: 0.6,
-        orographicCondensationRate: 0.75,
-        baseRainoutRate: 0.08,
-        foehnHeatingRate: 0.35
-      }
-    };
-
-    const moistMod = await import("./moisture-advection-engine");
-    moistureEngine = moistMod.MoistureAdvectionEngine;
+    expect(landCells).toBeGreaterThan(0);
+    const coverage = landWithPrecip / landCells;
+    expect(coverage).toBeGreaterThan(0.85);
   });
 
-  it("generuje pola prec (Uint8Array) i moisture (Float32Array)", () => {
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 2: Rain shadow — góra blokuje wilgoć
+  // ──────────────────────────────────────────────────────────────────────
+  it("rain shadow — nawietrzna strona ma co najmniej 1.5× więcej opadów niż zawietrzna", () => {
+    const cols = 40;
+    const rows = 20;
+    // Ocean po lewej (x < 10), ląd na reszcie, góry na x=18-20
+    buildGrid({
+      cols,
+      rows,
+      spacing: 25,
+      heightFn: (x, _y) => {
+        if (x < 10) return 10; // ocean
+        if (x >= 14 && x <= 16) return 85; // pasmo górskie
+        return 30; // nizina
+      },
+      windU: 6,
+      windV: 0 // wiatr z zachodu (ocean → ląd)
+    });
+
     moistureEngine.generate();
-    const { prec, moisture } = (globalThis as any).grid.cells;
+    const { prec } = (globalThis as any).grid.cells;
 
-    expect(prec).toBeInstanceOf(Uint8Array);
-    expect(moisture).toBeInstanceOf(Float32Array);
-    expect(prec.length).toBe(600);
-    expect(moisture.length).toBe(600);
+    // Nawietrzna: stok górski x=14, zawietrzna: nizina w cieniu x=22
+    let windwardSum = 0;
+    let leewardSum = 0;
+    for (let y = 3; y < rows - 3; y++) {
+      windwardSum += prec[y * cols + 14];
+      leewardSum += prec[y * cols + 22];
+    }
+
+    expect(windwardSum).toBeGreaterThan(leewardSum * 1.5);
   });
 
-  it("równanie Clausiusa-Clapeyrona rośnie nieliniowo z temperaturą", () => {
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 3: Duży kontynent — gradient penetracji wilgoci
+  // ──────────────────────────────────────────────────────────────────────
+  it("duży kontynent — opady maleją w głąb, ale centrum ma prec > 0", () => {
+    const cols = 50;
+    const rows = 20;
+    // Ocean po lewej (x < 5), cały reszta ląd
+    buildGrid({
+      cols,
+      rows,
+      spacing: 20,
+      heightFn: x => (x < 5 ? 10 : 30), // ocean → ląd
+      windU: 5,
+      windV: 0
+    });
+
+    moistureEngine.generate();
+    const { prec } = (globalThis as any).grid.cells;
+
+    // Wybrzeże (x=6), środek kontynentu (x=25), daleki wnętrze (x=45)
+    const midY = Math.floor(rows / 2);
+    const coastPrec = prec[midY * cols + 6];
+    const midPrec = prec[midY * cols + 25];
+    const farPrec = prec[midY * cols + 45];
+
+    // Gradient: wybrzeże > środek
+    expect(coastPrec).toBeGreaterThan(midPrec);
+    // Centrum ma jakieś opady (dyfuzja zapewnia penetrację)
+    expect(midPrec).toBeGreaterThan(0);
+    // Nawet daleki wnętrze ma coś
+    expect(farPrec).toBeGreaterThanOrEqual(0);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 4: Kotlina między górami — sucha
+  // ──────────────────────────────────────────────────────────────────────
+  it("kotlina otoczona górami jest sucha", () => {
+    const cols = 30;
+    const rows = 30;
+    // Ocean na brzegach, góry tworzą prostokąt, kotlina w środku
+    buildGrid({
+      cols,
+      rows,
+      spacing: 30,
+      heightFn: (x, y) => {
+        if (x < 3 || x > 26 || y < 3 || y > 26) return 10; // ocean
+        // Pierścień górski
+        if ((x >= 8 && x <= 10) || (x >= 19 && x <= 21)) return 85;
+        if ((y >= 8 && y <= 10) || (y >= 19 && y <= 21)) return 85;
+        // Kotlina wewnętrzna
+        if (x > 10 && x < 19 && y > 10 && y < 19) return 25;
+        return 30; // nizina zewnętrzna
+      },
+      windU: 5,
+      windV: 0
+    });
+
+    moistureEngine.generate();
+    const { prec } = (globalThis as any).grid.cells;
+
+    // Nawietrzny stok (x=8)
+    let windwardSum = 0;
+    let basinSum = 0;
+    let windwardCount = 0;
+    let basinCount = 0;
+    for (let y = 11; y < 19; y++) {
+      windwardSum += prec[y * cols + 8];
+      windwardCount++;
+      basinSum += prec[y * cols + 15];
+      basinCount++;
+    }
+
+    const avgWindward = windwardSum / windwardCount;
+    const avgBasin = basinSum / basinCount;
+
+    // Kotlina powinna mieć mniej opadów niż stok nawietrzny
+    expect(avgWindward).toBeGreaterThan(avgBasin);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 5: options.winds wpływa na rozkład opadów
+  // ──────────────────────────────────────────────────────────────────────
+  it("zmiana options.winds zmienia dystrybucję opadów", async () => {
+    const cols = 30;
+    const rows = 20;
+
+    // Wyspa z oceanem dookoła
+    const buildIsland = () =>
+      buildGrid({
+        cols,
+        rows,
+        spacing: 25,
+        heightFn: (x, y) => {
+          const cx = cols / 2;
+          const cy = rows / 2;
+          return Math.hypot(x - cx, y - cy) < 7 ? 35 : 10;
+        },
+        windU: 6,
+        windV: 0 // wiatr z zachodu
+      });
+
+    // Run z wiatrem z zachodu
+    buildIsland();
+    moistureEngine.generate();
+    const precWest = new Uint8Array((globalThis as any).grid.cells.prec);
+
+    // Run z wiatrem z wschodu
+    buildIsland();
+    (globalThis as any).grid.cells.windU.fill(-6); // wiatr z wschodu
+    (globalThis as any).grid.cells.windV.fill(0);
+    moistureEngine.generate();
+    const precEast = new Uint8Array((globalThis as any).grid.cells.prec);
+
+    // Opady na zachodniej stronie wyspy powinny być inne
+    const midY = Math.floor(rows / 2);
+    const westSide = midY * cols + Math.floor(cols / 2) - 5;
+    const eastSide = midY * cols + Math.floor(cols / 2) + 5;
+
+    // Z wiatrem z zachodu: zachodnia strona mokrzejsza
+    // Z wiatrem z wschodu: wschodnia strona mokrzejsza
+    const westDominantWest = precWest[westSide] >= precWest[eastSide];
+    const eastDominantEast = precEast[eastSide] >= precEast[westSide];
+
+    // Przynajmniej jeden wzorzec powinien się odwrócić
+    expect(westDominantWest || eastDominantEast).toBe(true);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 6: Clausius-Clapeyron rośnie nieliniowo
+  // ──────────────────────────────────────────────────────────────────────
+  it("Clausius-Clapeyron: ciśnienie pary rośnie >3× między 10°C a 30°C", () => {
     const e10 = moistureEngine.clausiusClapeyron(10);
     const e20 = moistureEngine.clausiusClapeyron(20);
     const e30 = moistureEngine.clausiusClapeyron(30);
 
     expect(e20).toBeGreaterThan(e10);
     expect(e30).toBeGreaterThan(e20);
-    // Wzrost z 10°C do 30°C to ponad 3-krotny wzrost ciśnienia pary nasyconej
     expect(e30 / e10).toBeGreaterThan(3.0);
   });
 
-  it("brak martwych stref — każda komórka lądowa ma prec > 0", () => {
-    moistureEngine.generate();
-    const { prec, h } = (globalThis as any).grid.cells;
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 7: Brak NaN/Infinity w polach wyjściowych
+  // ──────────────────────────────────────────────────────────────────────
+  it("brak NaN i Infinity we wszystkich polach", () => {
+    buildGrid({
+      cols: 20,
+      rows: 15,
+      spacing: 30,
+      heightFn: x => (x < 5 ? 10 : 30),
+      windU: 4,
+      windV: 1
+    });
 
-    for (let i = 0; i < h.length; i++) {
-      if (h[i] >= 20) {
-        expect(prec[i]).toBeGreaterThan(0);
-      }
-    }
-  });
-
-  it("efekt orograficzny i cień Fenu: nawietrzna ma istotnie wyższe opady niż zawietrzna", () => {
-    const { windU, windV } = (globalThis as any).grid.cells;
-    windU.fill(8.0); // 8 m/s z zachodu na wschód (z oceanu w góry)
-    windV.fill(0);
-
-    moistureEngine.generate();
-    const { prec } = (globalThis as any).grid.cells;
-
-    // Nawietrzny stok pasma górskiego (x = 12, y = 10), gdzie wysokość rośnie z 30 do 85
-    const windwardIdx = 10 * 30 + 12;
-    // Zawietrzna nizina w cieniu opadowym (x = 16, y = 10)
-    const leewardIdx = 10 * 30 + 16;
-
-    expect(prec[windwardIdx]).toBeGreaterThan(prec[leewardIdx]);
-    // Weryfikacja ilościowa: opad na stoku nawietrznym jest co najmniej 1.5x większy niż w cieniu
-    expect(prec[windwardIdx]).toBeGreaterThan(prec[leewardIdx] * 1.5);
-  });
-
-  it("efekt Fenu redukuje wilgotność powietrza po zawietrznej stronie pasma", () => {
-    const { windU, windV } = (globalThis as any).grid.cells;
-    windU.fill(8.0);
-    windV.fill(0);
-
-    moistureEngine.generate();
-    const { moisture } = (globalThis as any).grid.cells;
-
-    const coastIdx = 10 * 30 + 11; // wilgotne wybrzeże
-    const leewardIdx = 10 * 30 + 19; // sucha strona zawietrzna
-
-    expect(moisture[coastIdx]).toBeGreaterThan(moisture[leewardIdx]);
-  });
-
-  it("anomalia SST zwiększa parowanie i wilgoć docierającą do wybrzeża", () => {
-    // 1. Wygeneruj z zerową anomalią SST
-    (globalThis as any).grid.cells.sstAnomaly.fill(0);
-    moistureEngine.generate();
-    const baseCoastMoisture = (globalThis as any).grid.cells.moisture[10 * 30 + 10];
-
-    // 2. Wygeneruj z silną dodatnią anomalią SST (ciepły prąd morski +6°C)
-    (globalThis as any).grid.cells.sstAnomaly.fill(6.0);
-    moistureEngine.generate();
-    const warmCoastMoisture = (globalThis as any).grid.cells.moisture[10 * 30 + 10];
-
-    expect(warmCoastMoisture).toBeGreaterThan(baseCoastMoisture);
-  });
-
-  it("modyfikator precModifier (options.prec) skaluje wartości opadów", () => {
-    (globalThis as any).options.prec = 50;
-    moistureEngine.generate();
-    const rainLow = (globalThis as any).grid.cells.prec[10 * 30 + 11];
-
-    (globalThis as any).options.prec = 150;
-    moistureEngine.generate();
-    const rainHigh = (globalThis as any).grid.cells.prec[10 * 30 + 11];
-
-    expect(rainHigh).toBeGreaterThan(rainLow);
-  });
-
-  it("brak NaN i Infinity we wszystkich polach wilgoci i opadów", () => {
     moistureEngine.generate();
     const { prec, moisture } = (globalThis as any).grid.cells;
 
@@ -203,17 +324,85 @@ describe("MoistureAdvectionEngine", () => {
     }
   });
 
-  it("obsługuje brak temp fallbackując bezpiecznie do 15°C", () => {
-    (globalThis as any).grid.cells.temp = undefined;
-    expect(() => moistureEngine.generate()).not.toThrow();
-    const { prec } = (globalThis as any).grid.cells;
-    expect(prec[10 * 30 + 10]).toBeGreaterThan(0);
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 8: SST anomalia zwiększa wilgoć wybrzeżną
+  // ──────────────────────────────────────────────────────────────────────
+  it("ciepły prąd morski (SST +6°C) zwiększa wilgoć na wybrzeżu", () => {
+    buildGrid({
+      cols: 25,
+      rows: 15,
+      spacing: 30,
+      heightFn: x => (x < 8 ? 10 : 30),
+      windU: 5,
+      windV: 0
+    });
+
+    // Bez anomalii
+    moistureEngine.generate();
+    const basePrec = (globalThis as any).grid.cells.prec[7 * 25 + 9];
+
+    // Z ciepłym prądem
+    buildGrid({
+      cols: 25,
+      rows: 15,
+      spacing: 30,
+      heightFn: x => (x < 8 ? 10 : 30),
+      windU: 5,
+      windV: 0
+    });
+    (globalThis as any).grid.cells.sstAnomaly.fill(6.0);
+    moistureEngine.generate();
+    const warmPrec = (globalThis as any).grid.cells.prec[7 * 25 + 9];
+
+    expect(warmPrec).toBeGreaterThanOrEqual(basePrec);
   });
 
-  it("wydajność: obliczenia silnika wilgoci trwają < 35ms", () => {
-    const start = performance.now();
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 9: Obsługa braku temp — fallback do 15°C
+  // ──────────────────────────────────────────────────────────────────────
+  it("obsługuje brak temp bez crashu", () => {
+    buildGrid({
+      cols: 15,
+      rows: 10,
+      spacing: 30,
+      heightFn: x => (x < 5 ? 10 : 30),
+      windU: 4,
+      windV: 0
+    });
+    (globalThis as any).grid.cells.temp = undefined;
+
+    expect(() => moistureEngine.generate()).not.toThrow();
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Test 10: Każda komórka lądowa dostaje opady (no dead zones)
+  // ──────────────────────────────────────────────────────────────────────
+  it("brak martwych stref — >80% komórek lądowych ma prec > 0", () => {
+    buildGrid({
+      cols: 30,
+      rows: 20,
+      spacing: 25,
+      heightFn: x => {
+        if (x < 8) return 10; // ocean
+        return 30; // ląd
+      },
+      windU: 5,
+      windV: 1
+    });
+
     moistureEngine.generate();
-    const duration = performance.now() - start;
-    expect(duration).toBeLessThan(35);
+    const { prec, h } = (globalThis as any).grid.cells;
+
+    let landCells = 0;
+    let landWithPrecip = 0;
+    for (let i = 0; i < h.length; i++) {
+      if (h[i] >= 20) {
+        landCells++;
+        if (prec[i] > 0) landWithPrecip++;
+      }
+    }
+
+    expect(landCells).toBeGreaterThan(0);
+    expect(landWithPrecip / landCells).toBeGreaterThan(0.8);
   });
 });

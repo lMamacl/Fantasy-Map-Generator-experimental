@@ -94,9 +94,13 @@ export function drawPressure(): void {
 
   // 3. Interaktywne Żetony Centrów Barycznych (H/L) z obsługą przeciągania myszką (Drag & Drop)
   const options = (globalThis as any).options;
+  const showTokens = options?.atmosphere?.showTokens !== false;
   const centers: BaricCenter[] = options?.atmosphere?.baricCenters || [];
-  if (centers.length > 0) {
+
+  if (centers.length > 0 && showTokens) {
     const centersGroup = g.append("g").attr("id", "pressureCentersMarkers");
+    const spacing = grid.spacing ?? 10;
+    const kmPerCell = 10; // przybliżenie skali mapy
 
     const dragBehavior = drag<SVGGElement, BaricCenter>()
       .on("start", function () {
@@ -122,6 +126,7 @@ export function drawPressure(): void {
       const isHigh = c.type === "high" || c.pressureHPa >= 1013;
       const label = isHigh ? "H" : "L";
       const badgeColor = isHigh ? "#3b82f6" : "#ef4444";
+      const radiusPx = Math.max((c.radiusKm / kmPerCell) * (spacing / 10), 40);
 
       const tokenG = centersGroup
         .append("g")
@@ -131,7 +136,18 @@ export function drawPressure(): void {
         .style("cursor", "grab")
         .call(dragBehavior as any);
 
-      // Pulsujący pierścień zewnętrzny
+      // Strefa oddziaływania R (okrąg Gaussa)
+      tokenG
+        .append("circle")
+        .attr("r", radiusPx)
+        .attr("fill", badgeColor)
+        .attr("fill-opacity", 0.05)
+        .attr("stroke", badgeColor)
+        .attr("stroke-width", 1.2)
+        .attr("stroke-dasharray", "4 4")
+        .attr("opacity", 0.6);
+
+      // Pulsujący pierścień wewnętrzny żetonu
       tokenG
         .append("circle")
         .attr("r", 22)

@@ -5,26 +5,26 @@
  * gyres, transport Ekmana, wzmocnienie prądów zachodnich krawędzi) oraz oblicza
  * anomalię temperatury powierzchni morza (SST Anomaly) wywołaną transportem ciepła.
  *
- * Warunek brzegowy:
- *   W strefie brzegowej wektor prądu jest rzutowany stycznie do linii brzegowej
- *   (V · n_coast = 0), uniemożliwiając wciekanie wody na ląd i zapewniając
- *   płynne opływanie przylądków i wysp.
+ * Nowe w v2: SST wpływa na temperaturę brzegowych komórek lądowych (efekt Golfsztromu).
  *
  * @module generators/aero-hydro/ocean-engine
  */
 
 import { defaultOceanCurrentsConfig, type OceanCurrentsConfig } from "@/types/aero-hydro";
-import { projectTangentToCoast } from "@/utils/grid-math";
+import { gridCellsToKm, projectTangentToCoast } from "@/utils/grid-math";
+
+/** Współczynnik przeliczenia południkowej prędkości prądu na anomalię SST [°C/(m/s)] */
+const SST_MERIDIONAL_FACTOR = 12.0;
+/** Maksymalna anomalia SST w realistycznym zakresie [°C] */
+const SST_MAX_ANOMALY = 8.0;
+/** Zasięg wpływu SST na temperaturę lądową [km] */
+const SST_LAND_DECAY_KM = 150;
+/** Maksymalny wpływ SST na temperaturę lądową [°C] */
+const SST_LAND_MAX_INFLUENCE = 5.0;
 
 export class OceanEngineModule {
   /**
    * Główna metoda generująca wektory prądów morskich i pole anomalii SST.
-   * Wpisuje wyniki bezpośrednio do struktur w `grid.cells`:
-   *   - `oceanU`       – składowa X prądu morskiego [m/s]
-   *   - `oceanV`       – składowa Y prądu morskiego [m/s]
-   *   - `sstAnomaly`   – anomalia temperatury powierzchni morza [°C]
-   *
-   * @param customConfig Opcjonalna niestandardowa konfiguracja prądów morskich
    */
   generate(customConfig?: Partial<OceanCurrentsConfig>): void {
     const grid = (globalThis as any).grid;
@@ -49,8 +49,10 @@ export class OceanEngineModule {
     const { cells, points } = grid;
     const graphHeight = (globalThis as any).graphHeight ?? 1000;
     const graphWidth = (globalThis as any).graphWidth ?? 1000;
+    const spacing = grid.spacing ?? 10;
+    const kmPerCell = Math.max(gridCellsToKm(1), 0.1);
 
-    // 1. Alokacja lub ponowne użycie TypedArrays
+    // 1. Alokacja TypedArrays
     if (!cells.oceanU || cells.oceanU.length !== n) {
       cells.oceanU = new Float32Array(n);
       cells.oceanV = new Float32Array(n);
@@ -60,10 +62,9 @@ export class OceanEngineModule {
     const { oceanU, oceanV, sstAnomaly, windU, windV } = cells;
     const isWater = (i: number) => cells.h[i] < 20;
 
-    // Kąt Ekmana w radianach
     const ekmanRad = (config.ekmanAngle * Math.PI) / 180;
 
-    // 2. Krok I: Naprężenie wiatrowe z odchyleniem Ekmana na otwartym oceanie
+    // 2. Naprężenie wiatrowe z odchyleniem Ekmana
     for (let i = 0; i < n; i++) {
       if (!isWater(i)) {
         oceanU[i] = 0;
@@ -86,34 +87,23 @@ export class OceanEngineModule {
         continue;
       }
 
-      // Kąt odchylenia transportu Ekmana (w prawo na NH (+), w lewo na SH (-))
       const rotAngle = -fSign * ekmanRad;
-
       const cosE = Math.cos(rotAngle);
       const sinE = Math.sin(rotAngle);
 
       let uRaw = (wU * cosE - wV * sinE) * config.windStressFactor;
       let vRaw = (wU * sinE + wV * cosE) * config.windStressFactor;
 
-      // 3. Wzmocnienie zachodnich brzegów basenu oceanicznego (Western Boundary Currents)
-      // Jeśli na zachód (w lewo) od komórki w odległości szelfu znajduje się ląd, wzmocnij prąd
+      // 3. Western Intensification — analiza pozycji w basenie oceanicznym
       const [x] = points[i];
-      const relX = x / graphWidth;
-      // Wykrywanie zachodniego brzegu akwenu (ląd na zachód, woda na wschód)
-      let westBoost = 1.0;
-      const nb = cells.c[i];
-      let hasWestLand = false;
-      for (let j = 0; j < nb.length; j++) {
-        const neighbor = nb[j];
-        if (cells.h[neighbor] >= 20 && points[neighbor][0] < x) {
-          hasWestLand = true;
-          break;
-        }
-      }
-
-      if (hasWestLand || relX < 0.25) {
-        westBoost = config.westernIntensification;
-      }
+      const westBoost = this.calculateWesternIntensification(
+        x,
+        cells.c[i],
+        cells.h,
+        points,
+        graphWidth,
+        config.westernIntensification
+      );
 
       uRaw *= westBoost;
       vRaw *= westBoost;
@@ -122,11 +112,9 @@ export class OceanEngineModule {
       oceanV[i] = vRaw;
     }
 
-    // 4. Krok II: Warunki brzegowe (rzutowanie styczne do linii brzegowej V · n = 0)
+    // 4. Warunki brzegowe (rzutowanie styczne V · n = 0)
     for (let i = 0; i < n; i++) {
       if (!isWater(i)) continue;
-
-      // Sprawdź czy komórka graniczy z lądem lub jest w strefie szelfu (cells.t < 0)
       if (cells.t && cells.t[i] < 0) {
         const [tangU, tangV] = projectTangentToCoast(oceanU[i], oceanV[i], i, cells.t, points, cells.c);
         oceanU[i] = tangU;
@@ -134,12 +122,11 @@ export class OceanEngineModule {
       }
     }
 
-    // 5. Krok III: Wygładzanie ciągłości przepływu w basenie morskim
-    // barrier-aware: wygładzamy tylko między komórkami wodnymi
+    // 5. Wygładzanie ciągłości przepływu (barrier-aware)
     this.barrierAwareSmooth(oceanU, cells.c, cells.h, 0.2, 1);
     this.barrierAwareSmooth(oceanV, cells.c, cells.h, 0.2, 1);
 
-    // Ponowne zabezpieczenie brzegowe po wygładzeniu
+    // Ponowne zabezpieczenie brzegowe
     for (let i = 0; i < n; i++) {
       if (!isWater(i)) {
         oceanU[i] = 0;
@@ -153,10 +140,7 @@ export class OceanEngineModule {
       }
     }
 
-    // 6. Krok IV: Obliczanie Anomalii SST (°C)
-    // Prąd płynący od równika niesie ciepło (anomalia +), a od bieguna chłód (anomalia -).
-    // Na półkuli N: składowa ku północy (V < 0 w układzie ekranowym y w dół) to prąd ciepły.
-    // Na półkuli S: składowa ku południowi (V > 0) to prąd ciepły.
+    // 6. Anomalia SST z transportu ciepła
     for (let i = 0; i < n; i++) {
       if (!isWater(i)) {
         sstAnomaly[i] = 0;
@@ -174,27 +158,136 @@ export class OceanEngineModule {
         continue;
       }
 
-      // Prędkość południkowa: ujemne V to ruch ku północy, dodatnie ku południowi
-      // Na NH (lat > 0): ruch na północ (v < 0) niesie ciepłą wodę z równika -> anomalia > 0
-      // Na SH (lat < 0): ruch na południe (v > 0) niesie ciepłą wodę z równika -> anomalia > 0
+      // Prąd od równika = ciepło, od bieguna = chłód
       let meridionalHeating = 0;
       if (lat >= 0) {
-        meridionalHeating = -v * 12.0; // [°C] proporcjonalne do prędkości prądu
+        meridionalHeating = -v * SST_MERIDIONAL_FACTOR;
       } else {
-        meridionalHeating = v * 12.0;
+        meridionalHeating = v * SST_MERIDIONAL_FACTOR;
       }
 
-      // Ograniczenie anomalii do realistycznego zakresu fizycznego [-8°C, +8°C]
-      sstAnomaly[i] = Math.max(-8, Math.min(8, meridionalHeating));
+      sstAnomaly[i] = Math.max(-SST_MAX_ANOMALY, Math.min(SST_MAX_ANOMALY, meridionalHeating));
     }
 
-    // Wygładzenie pola anomalii SST nad wodą
+    // Wygładzenie anomalii SST
     this.barrierAwareSmooth(sstAnomaly, cells.c, cells.h, 0.3, 2);
+
+    // 7. NOWE: SST wpływa na temperaturę brzegowych komórek lądowych
+    this.propagateSstToLand(cells, spacing, kmPerCell);
   }
 
   /**
-   * Wygładzanie Laplacjańskie respektujące bariery ląd/woda (barrier-aware smoothing).
-   * Miesza wartości tylko pomiędzy komórkami o tym samym typie ośrodka (morze z morzem).
+   * Analiza pozycji komórki w basenie oceanicznym:
+   * Western Intensification bazowane na tym, czy komórka jest na zachodniej
+   * krawędzi ciągłego akwenu (nie tylko "sąsiad z zachodu jest lądem").
+   */
+  private calculateWesternIntensification(
+    x: number,
+    neighbors: number[],
+    heights: Uint8Array,
+    points: [number, number][],
+    graphWidth: number,
+    maxBoost: number
+  ): number {
+    if (!neighbors || neighbors.length === 0) return 1.0;
+
+    // Policz sąsiadów lądowych po zachodniej stronie
+    let westLandCount = 0;
+    let totalWest = 0;
+    for (let j = 0; j < neighbors.length; j++) {
+      const nx = points[neighbors[j]][0];
+      if (nx < x) {
+        totalWest++;
+        if (heights[neighbors[j]] >= 20) westLandCount++;
+      }
+    }
+
+    // Pozycja relatywna na mapie — im bardziej na zachód, tym silniejszy efekt
+    const relX = x / graphWidth;
+    const positionFactor = Math.max(0, 1 - relX * 2); // 1 na lewym brzegu, 0 w środku
+
+    // Łączenie: bezpośredni ląd na zachód + pozycja w basenie
+    const directLandFactor = totalWest > 0 ? westLandCount / totalWest : 0;
+    const combinedFactor = Math.max(directLandFactor, positionFactor * 0.5);
+
+    return 1.0 + (maxBoost - 1.0) * combinedFactor;
+  }
+
+  /**
+   * Propaguje anomalię SST na komórki lądowe brzegowe.
+   * Efekt Golfsztromu: ciepły prąd morski ociepla pobliski ląd.
+   */
+  private propagateSstToLand(cells: any, spacing: number, kmPerCell: number): void {
+    const n = cells.h.length;
+    if (!cells.sstAnomaly) return;
+
+    // Zainicjuj pole wpływu SST na ląd (addytywne do cells.temp)
+    if (!cells.sstLandInfluence || cells.sstLandInfluence.length !== n) {
+      cells.sstLandInfluence = new Float32Array(n);
+    }
+    const influence = cells.sstLandInfluence;
+    influence.fill(0);
+
+    // Dla każdej komórki lądowej sprawdź sąsiadów morskich
+    for (let i = 0; i < n; i++) {
+      if (cells.h[i] < 20) continue; // pomiń ocean
+
+      const nb = cells.c[i];
+      if (!nb || nb.length === 0) continue;
+
+      let sstSum = 0;
+      let sstCount = 0;
+      for (let j = 0; j < nb.length; j++) {
+        const neighbor = nb[j];
+        if (cells.h[neighbor] < 20 && cells.sstAnomaly[neighbor] !== 0) {
+          sstSum += cells.sstAnomaly[neighbor];
+          sstCount++;
+        }
+      }
+
+      if (sstCount > 0) {
+        const avgSst = sstSum / sstCount;
+        // Bezpośredni sąsiad morski → pełny wpływ (distance ≈ 1 cell)
+        const distKm = (spacing / 1) * kmPerCell;
+        const decay = Math.exp(-distKm / SST_LAND_DECAY_KM);
+        influence[i] = Math.max(-SST_LAND_MAX_INFLUENCE, Math.min(SST_LAND_MAX_INFLUENCE, avgSst * decay * 0.6));
+      }
+    }
+
+    // Rozprzestrzenienie wpływu SST na 2-3 komórki w głąb lądu (2 iteracje dyfuzji)
+    const temp = new Float32Array(n);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < n; i++) {
+        if (cells.h[i] < 20) {
+          temp[i] = 0;
+          continue;
+        }
+        const nb = cells.c[i];
+        if (!nb || nb.length === 0) {
+          temp[i] = influence[i];
+          continue;
+        }
+
+        let sum = 0;
+        let landCount = 0;
+        for (let j = 0; j < nb.length; j++) {
+          if (cells.h[nb[j]] >= 20) {
+            sum += influence[nb[j]];
+            landCount++;
+          }
+        }
+        if (landCount > 0) {
+          temp[i] = influence[i] * 0.7 + (sum / landCount) * 0.3;
+        } else {
+          temp[i] = influence[i];
+        }
+      }
+      influence.set(temp);
+    }
+  }
+
+  /**
+   * Wygładzanie Laplacjańskie barrier-aware (morze z morzem).
    */
   private barrierAwareSmooth(
     field: Float32Array,
@@ -212,7 +305,6 @@ export class OceanEngineModule {
           temp[i] = field[i];
           continue;
         }
-
         const nb = neighbors[i];
         if (!nb || nb.length === 0) {
           temp[i] = field[i];
@@ -222,19 +314,13 @@ export class OceanEngineModule {
         let sumVal = 0;
         let waterCount = 0;
         for (let j = 0; j < nb.length; j++) {
-          const neighbor = nb[j];
-          if (heights[neighbor] < 20) {
-            sumVal += field[neighbor];
+          if (heights[nb[j]] < 20) {
+            sumVal += field[nb[j]];
             waterCount++;
           }
         }
 
-        if (waterCount > 0) {
-          const meanVal = sumVal / waterCount;
-          temp[i] = (1 - alpha) * field[i] + alpha * meanVal;
-        } else {
-          temp[i] = field[i];
-        }
+        temp[i] = waterCount > 0 ? (1 - alpha) * field[i] + alpha * (sumVal / waterCount) : field[i];
       }
       field.set(temp);
     }

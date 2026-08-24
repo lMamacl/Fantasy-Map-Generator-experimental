@@ -176,8 +176,10 @@ export class CanvasParticleAnimator {
         continue;
       }
 
-      p.x += (u / (speed + 0.6)) * this.config.particleSpeedMultiplier;
-      p.y += (v / (speed + 0.6)) * this.config.particleSpeedMultiplier;
+      // Bezpośrednie fizyczne całkowanie wektora wiatru
+      const dt = 0.14 * this.config.particleSpeedMultiplier;
+      p.x += u * dt;
+      p.y += v * dt;
     }
   }
 

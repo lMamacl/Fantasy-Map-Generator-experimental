@@ -95,38 +95,68 @@ export function defaultOceanCurrentsConfig(): OceanCurrentsConfig {
 }
 
 /**
- * Konfiguracja adwekcji wilgoci i termodynamiki opadów.
- * Model Clausiusa-Clapeyrona z multi-pass adwekcją 2D, orografią i efektem fenu.
+ * Konfiguracja Eulerowskiego silnika wilgoci i klimatu.
+ * Model dyfuzyjno-adwekcyjny z Clausius-Clapeyron, orografią i ewapotranspiracją.
  */
 export interface MoistureConfig {
-  /** Minimalne opady bazowe w mm/rok — nawet pustynie mają > 0 */
-  minPrecipMmYr: number;
-  /** Liczba przejść adwekcyjnych (multi-pass, typowo 3–6) */
-  advectionPasses: number;
-  /** Współczynnik dyfuzji atmosferycznej wygładzającej gradienty */
+  /** Liczba iteracji dyfuzji-adwekcji (zbieżność po 4–8) */
+  iterations: number;
+  /** Współczynnik dyfuzji bazowej — modeluje turbulencję i zmienność wiatru */
   diffusionCoeff: number;
-  /** Współczynnik wymiany masy w adwekcji upwind (0.1–0.9, domyślnie 0.6) */
-  advectionRate?: number;
-  /** Wydajność kondensacji orograficznej przy wznoszeniu (0.1–1.0, domyślnie 0.75) */
-  orographicCondensationRate?: number;
-  /** Naturalny ubytek opadowy w kolumnie powietrza (0.01–0.3, domyślnie 0.08) */
-  baseRainoutRate?: number;
-  /** Ogrzewanie fenowe po zawietrznej (°C na jednostkę spadku terenu, domyślnie 0.35) */
-  foehnHeatingRate?: number;
+  /** Siła adwekcji wiatrem (ile wiatr wzmacnia transport vs. dyfuzja) */
+  advectionStrength: number;
+  /** Wydajność kondensacji nadwyżki wilgoci ponad pojemność (0–1) */
+  condensationRate: number;
+  /** Jak silnie wznoszenie terenu blokuje/wymusza kondensację (m/km → rate) */
+  orographicBlockRate: number;
+  /** Skalowanie parowania oceanicznego do jednostek wewnętrznych */
+  oceanEvapScale: number;
+  /** Skalowanie pojemności Clausius-Clapeyron do pojemności kolumny powietrza */
+  capacityScale: number;
+  /** Ogrzewanie fenowe po zawietrznej stronie (°C na jednostkę spadku, domyślnie 0.35) */
+  foehnHeatingRate: number;
 }
 
 /** Domyślne wartości dla MoistureConfig */
 export function defaultMoistureConfig(): MoistureConfig {
   return {
-    minPrecipMmYr: 10,
-    advectionPasses: 4,
+    iterations: 14,
     diffusionCoeff: 0.15,
-    advectionRate: 0.6,
-    orographicCondensationRate: 0.75,
-    baseRainoutRate: 0.08,
+    advectionStrength: 0.4,
+    condensationRate: 0.6,
+    orographicBlockRate: 0.8,
+    oceanEvapScale: 8.0,
+    capacityScale: 0.5,
     foehnHeatingRate: 0.35
   };
 }
+
+/**
+ * Współczynnik konwersji prec→mm/yr. 1 jednostka prec = PRECIP_SCALE_FACTOR mm/yr.
+ * Max Uint8 255 × 20 = 5100 mm/yr (pokrywa nawet Cherrapunji).
+ */
+export const PRECIP_SCALE_FACTOR = 20;
+
+/**
+ * Domyślne współczynniki ewapotranspiracji per biom (indeks = biome ID z FMG).
+ * Wartość 0–1: jaka część opadu jest recyklowana z powrotem do atmosfery.
+ * Bazowane na danych rzeczywistych: lasy tropikalne ~45%, tundra ~3%.
+ */
+export const DEFAULT_EVAPOTRANSPIRATION: readonly number[] = [
+  0.0, // 0  Marine — nie dotyczy
+  0.02, // 1  Hot desert — prawie brak wegetacji
+  0.03, // 2  Cold desert — minimalna
+  0.15, // 3  Savanna — trawy i rozproszone drzewa
+  0.12, // 4  Grassland — trawy
+  0.35, // 5  Tropical seasonal forest
+  0.25, // 6  Temperate deciduous forest
+  0.45, // 7  Tropical rainforest — najwyższy recykling (Amazonia)
+  0.3, // 8  Temperate rainforest
+  0.1, // 9  Taiga — iglaste, powolne
+  0.03, // 10 Tundra — minimalna
+  0.0, // 11 Glacier — brak
+  0.35 // 12 Wetland — mokradła, wysoki recykling
+];
 
 /**
  * Pola fizyczne dołączane do grid.cells.

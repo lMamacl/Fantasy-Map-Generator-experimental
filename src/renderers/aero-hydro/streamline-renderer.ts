@@ -96,8 +96,8 @@ export class StreamlineRendererModule {
         let prevDx = 0;
         let prevDy = 0;
 
-        // Oznacz komórkę startową i jej sąsiedztwo 2-3 komórek
-        this.markExclusionZone(startCell, neighbors, usedCells, 2);
+        // Oznacz komórkę startową i jej sąsiedztwo 3 komórek
+        this.markExclusionZone(startCell, neighbors, usedCells, 3);
 
         // Śledź wstęgę wiatru przez 6–10 kroków (elegancka, wyrazista długość)
         for (let step = 0; step < 10; step++) {
@@ -111,8 +111,8 @@ export class StreamlineRendererModule {
           totalSpeed += speed;
           validSteps++;
 
-          // Oznacz bieżącą komórkę i sąsiedztwo
-          this.markExclusionZone(cellIdx, neighbors, usedCells, 2);
+          // Oznacz bieżącą komórkę i sąsiedztwo (separacja 3 komórek)
+          this.markExclusionZone(cellIdx, neighbors, usedCells, 3);
 
           let dx = (u / (speed + 0.6)) * 22;
           let dy = (v / (speed + 0.6)) * 22;
