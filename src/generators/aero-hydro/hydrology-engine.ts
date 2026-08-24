@@ -79,7 +79,7 @@ export class HydrologyEngineModule {
       const i = landIndices[k];
       const areaKm2 = Math.max(cellAreaKm2(), 1.0);
 
-      const precMmYr = prec ? Math.max(prec[i], 1) * 10 : 500; // szacunek mm/rok
+      const precMmYr = prec ? Math.max(prec[i], 1) * 100 : 500; // FMG prec unit = 100 mm/rok
       // Objętość opadu na komórkę w m³/rok = km² * 1e6 * (mm / 1000) = km² * mm * 1000
       const runoffCoeff = heights[i] > 60 ? 0.8 : 0.65; // wyższy spływ w skałach górskich
       const localDischargeM3S = (areaKm2 * precMmYr * 1000 * runoffCoeff) / SECONDS_IN_YEAR;
