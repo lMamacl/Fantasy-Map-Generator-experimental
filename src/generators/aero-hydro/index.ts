@@ -93,21 +93,11 @@ declare global {
   var AeroHydro: AeroHydroModule;
 }
 
-// ─── BUG-1 FIX: Rejestracja window.generateAeroHydro ───────────────────────
-// Pipeline FMG (main.js, resample.ts, heightmap-editor.ts, world-configurator.ts)
-// wywołuje generateAeroHydro() jako globalną funkcję. Musi być przypisana na window.
+// ─── Rejestracja globalnych wywołań ─────────────────────────────────────────
 if (typeof window !== "undefined") {
   window.AeroHydro = AeroHydro;
   window.generateAeroHydro = () => AeroHydro.generate();
-}
-
-// ─── BUG-2 FIX: Podmiana legacy generatePrecipitation ───────────────────────
-// Oryginalna generatePrecipitation() z main.js używa 1D passWind() i NADPISUJE
-// cells.prec wyliczone przez nasz MoistureAdvectionEngine. Zastępujemy ją no-op,
-// ponieważ MoistureAdvectionEngine w generate() już wypełnia cells.prec.
-if (typeof window !== "undefined") {
   window.generatePrecipitation = () => {
-    // No-op: precipitation is now calculated by MoistureAdvectionEngine
-    // as part of generateAeroHydro() pipeline (Pętla 4).
+    MoistureAdvectionEngine.generate();
   };
 }

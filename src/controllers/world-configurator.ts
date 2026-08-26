@@ -362,9 +362,8 @@ function updateInputValues(): void {
 function updateWorld(): void {
   updateGlobeTemperature();
   updateGlobePosition();
-  generateAeroHydro();
   calculateTemperatures();
-  generatePrecipitation();
+  generateAeroHydro();
   const heights = new Uint8Array(pack.cells.h);
   Rivers.generate();
   Rivers.specify();

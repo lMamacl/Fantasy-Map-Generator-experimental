@@ -250,7 +250,12 @@ export class MoistureAdvectionEngineModule {
     laplacianSmooth(precipMmYr, cells.c, 0.08, 1);
 
     // ─── Krok 4: Zapis do tablicy FMG cells.prec [0–255] ───
-    const FMG_PREC_DIVISOR = 40;
+    // Skala FMG: 1 prec ≈ 55 mm/rok.
+    // Nizina europejska (550-850 mm/rok) -> prec 10-15 (Temperate deciduous forest)
+    // Stoki nawietrzne i wybrzeża (1200-2400 mm/rok) -> prec 22-45 (Temperate rainforest)
+    // Cień opadowy (250-400 mm/rok) -> prec 4-7 (Grassland/steppe)
+    // Pustynia zwrotnikowa (<150 mm/rok) -> prec 1-2 (Hot/cold desert)
+    const FMG_PREC_DIVISOR = 55;
 
     for (let i = 0; i < n; i++) {
       if (isWater(i)) {

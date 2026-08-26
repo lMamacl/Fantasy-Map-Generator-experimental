@@ -136,7 +136,7 @@ export function defaultMoistureConfig(): MoistureConfig {
  * Max Uint8 255 × 40 = 10200 mm/yr.
  * Skala FMG-kompatybilna: typowe niziny 15-60 prec, góry 80-120+.
  */
-export const PRECIP_SCALE_FACTOR = 40;
+export const PRECIP_SCALE_FACTOR = 55;
 
 /**
  * Domyślne współczynniki ewapotranspiracji per biom (indeks = biome ID z FMG).
