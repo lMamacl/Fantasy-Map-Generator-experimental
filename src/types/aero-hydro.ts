@@ -132,10 +132,11 @@ export function defaultMoistureConfig(): MoistureConfig {
 }
 
 /**
- * Współczynnik konwersji prec→mm/yr. 1 jednostka prec = PRECIP_SCALE_FACTOR mm/yr.
- * Max Uint8 255 × 20 = 5100 mm/yr (pokrywa nawet Cherrapunji).
+ * Współczynnik konwersji prec→mm/yr. 1 jednostka prec ≈ PRECIP_SCALE_FACTOR mm/yr.
+ * Max Uint8 255 × 40 = 10200 mm/yr.
+ * Skala FMG-kompatybilna: typowe niziny 15-60 prec, góry 80-120+.
  */
-export const PRECIP_SCALE_FACTOR = 20;
+export const PRECIP_SCALE_FACTOR = 40;
 
 /**
  * Domyślne współczynniki ewapotranspiracji per biom (indeks = biome ID z FMG).

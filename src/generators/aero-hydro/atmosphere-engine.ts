@@ -21,15 +21,13 @@ import { gridCellsToKm, laplacianSmooth } from "@/utils/grid-math";
 // ─── Named Constants ──────────────────────────────────────────────────────────
 
 /** Skala konwersji gradientu ciśnienia → prędkość wiatru geostroficznego [m/s per hPa/cell] */
-const GEOSTROPHIC_SCALE = 46;
+const GEOSTROPHIC_SCALE = 14.0;
 /** Skala składowej cross-isobar (przeskok ciśnieniowy prostopadły do izobary) */
-const CROSS_ISOBAR_SCALE = 24;
+const CROSS_ISOBAR_SCALE = 8.0;
 /** Perturbacja termiczna lądu — niż kontynentalny [hPa], uśredniony rocznie */
-const LAND_THERMAL_PRESSURE = -3.5;
+const LAND_THERMAL_PRESSURE = -2.5;
 /** Perturbacja termiczna oceanu — stabilniejsze ciśnienie [hPa] */
-const OCEAN_THERMAL_PRESSURE = 1.5;
-/** Spadek ciśnienia powierzchniowego na jednostkę wysokości terenu [hPa / unit] */
-const ALTITUDE_PRESSURE_LAPSE = 0.75;
+const OCEAN_THERMAL_PRESSURE = 1.0;
 
 /**
  * Domyślne kierunki wiatrów na Ziemi (kąty FMG: 0°=N, 90°=E, 180°=S, 270°=W):
@@ -95,12 +93,14 @@ export class AtmosphereEngineModule {
     const kmPerCell = Math.max(gridCellsToKm(1), 0.1);
     const isLand = (i: number) => cells.h[i] >= 20;
 
-    // ─── 2. Ciśnienie bazowe, orograficzne, centra baryczne i wind hints ───
+    // ─── 2. Ciśnienie zredukowane do poziomu morza (MSLP), centra baryczne i wind hints ───
+    // W meteorologii wiatr geostroficzny wynika z gradientu MSLP (Mean Sea Level Pressure).
+    // Surowy spadek barometryczny na wysokości (-70 hPa na szczytach) nie generuje huraganów
+    // o prędkości 3000 m/s na graniach — wiatr opływa góry mechanicznie.
     for (let i = 0; i < n; i++) {
       const [x, y] = points[i];
       const lat = mapCoordinates.latN - (y / graphHeight) * mapCoordinates.latT;
       const absLat = Math.abs(lat);
-      const h_i = cells.h[i];
 
       // 2a. Profil strefowy na poziomie morza [hPa]
       const pZonal = this.calculateZonalPressure(absLat, config.zonalPressureHPa);
@@ -114,20 +114,13 @@ export class AtmosphereEngineModule {
         pThermal = OCEAN_THERMAL_PRESSURE;
       }
 
-      // 2c. Wpływ wysokości terenu (wzór barometryczny powierzchniowy)
-      // Na szczytach (h=85) ciśnienie powierzchniowe spada o ~45-55 hPa
-      let pAltitude = 0;
-      if (h_i >= 20) {
-        pAltitude = -((h_i - 20) ** 1.05) * ALTITUDE_PRESSURE_LAPSE;
-      }
-
-      // 2d. Wind hint z options.winds[] — modyfikacja ciśnienia strefowego
+      // 2c. Wind hint z options.winds[] — synoptyczna modyfikacja ciśnienia
       const windTier = this.getWindTier(lat);
       const userAngle = winds[windTier] ?? DEFAULT_WIND_ANGLES[windTier];
       const defaultAngle = DEFAULT_WIND_ANGLES[windTier];
       const pWindHint = this.calculateWindHintPressure(userAngle, defaultAngle, x, y, graphWidth, graphHeight);
 
-      // 2e. Nadkład centrów barycznych
+      // 2d. Nadkład centrów barycznych (High/Low)
       let pCenters = 0;
       if (config.baricCenters?.length) {
         for (const c of config.baricCenters) {
@@ -146,13 +139,14 @@ export class AtmosphereEngineModule {
         }
       }
 
-      pressure[i] = pZonal + pThermal + pAltitude + pWindHint + pCenters;
+      // Ciśnienie na poziomie morza (MSLP) — to ono definiuje pole baryczne i izobary synoptyczne
+      pressure[i] = pZonal + pThermal + pWindHint + pCenters;
     }
 
-    // 3. Wygładzenie Laplacjanem (delikatne, zachowujące ostre grzbiety)
-    laplacianSmooth(pressure, cells.c, 0.04, 1);
+    // 3. Wygładzenie Laplacjanem ciśnienia synoptycznego
+    laplacianSmooth(pressure, cells.c, 0.08, 2);
 
-    // ─── 4. Wektory wiatru (FVM Green-Gauss + Coriolis + Orografia) ───
+    // ─── 4. Wektory wiatru (Planetary Background + Geostrophic Perturbation + Orografia) ───
     const omega = 7.2921e-5; // prędkość kątowa Ziemi [rad/s]
 
     for (let i = 0; i < n; i++) {
@@ -160,8 +154,22 @@ export class AtmosphereEngineModule {
       const neigh = cells.c[i] || [];
       const p_i = pressure[i];
       const h_i = cells.h[i];
+      const isL = h_i >= 20;
 
-      // Gradient ciśnienia i wysokości (Green-Gauss na komórce Voronoi)
+      // 4a. Planetarny wiatr tła (Prevailing Planetary Wind) wg strefy i options.winds
+      const lat = mapCoordinates.latN - (y / graphHeight) * mapCoordinates.latT;
+      const windTier = this.getWindTier(lat);
+      const userAngle = winds[windTier] ?? DEFAULT_WIND_ANGLES[windTier];
+      const userRad = (userAngle * Math.PI) / 180;
+      // FMG kąt wiatru: kąt skąd wieje (0=N, 90=E, 180=S, 270=W)
+      // Zwrot wektora prędkości (dokąd wieje): dirX = sin(userRad), dirY = -cos(userRad)
+      const dirToX = Math.sin(userRad);
+      const dirToY = -Math.cos(userRad);
+      const basePlanetarySpeed = isL ? 3.8 : 6.2;
+      const bgU = dirToX * basePlanetarySpeed;
+      const bgV = dirToY * basePlanetarySpeed;
+
+      // 4b. Gradient MSLP (Green-Gauss na komórce Voronoi)
       let gradX = 0;
       let gradY = 0;
       let gradHx = 0;
@@ -185,37 +193,33 @@ export class AtmosphereEngineModule {
       gradHy /= nLen;
 
       // Parametr Coriolisa
-      const lat = mapCoordinates.latN - (y / graphHeight) * mapCoordinates.latT;
       const latRad = (lat * Math.PI) / 180;
       const fCoriolis = Math.max(Math.abs(2 * omega * Math.sin(latRad)), config.coriolisFloor);
-      const coriolisFactor = Math.min(Math.abs(2 * omega) / fCoriolis, 3.0);
+      const coriolisFactor = Math.min(Math.abs(2 * omega) / fCoriolis, 2.5);
       const latSign = lat >= 0 ? 1 : -1;
 
-      const isL = h_i >= 20;
-
       // Współczynniki oporu podłoża
-      const surfaceSpeedFactor = isL ? 0.65 : 1.25;
-      const crossIsobarFactor = isL ? 0.38 : 0.1;
+      const surfaceSpeedFactor = isL ? 0.7 : 1.2;
+      const crossIsobarFactor = isL ? 0.35 : 0.1;
 
-      // Wiatr bazowy z gradientu ciśnienia i Coriolisa
+      // Składowa geostroficzna z gradientu ciśnienia synoptycznego
       const geoScale = GEOSTROPHIC_SCALE * coriolisFactor;
-      let u = (-gradY * geoScale * latSign + gradX * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
-      let v = (gradX * geoScale * latSign + gradY * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
+      const u_geo = (-gradY * geoScale * latSign + gradX * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
+      const v_geo = (gradX * geoScale * latSign + gradY * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
 
-      // ─── 4b. Mechaniczna blokada i opływanie grzbietów górskich ───────
-      // Sprawdź czy wiatr uderza w barierę górską
+      // Całkowity wiatr = tło planetarne + perturbacja baryczna
+      let u = bgU + u_geo;
+      let v = bgV + v_geo;
+
+      // ─── 4c. Mechaniczna blokada i opływanie grzbietów górskich ───────
       const hGradLen = Math.hypot(gradHx, gradHy);
       if (hGradLen > 0.005) {
-        const normHx = gradHx / hGradLen; // wektor normalny wskazujący W GÓRĘ stoku
+        const normHx = gradHx / hGradLen; // normalna W GÓRĘ stoku
         const normHy = gradHy / hGradLen;
-
-        // Iloczyn skalarny: dodatni = wiatr wieje prosto W GÓRĘ zbocza
         const uphillDot = u * normHx + v * normHy;
 
-        // Wektor styczny do poziomicy grani (kierunek opływu wzdłuż doliny)
         let tangX = -normHy;
         let tangY = normHx;
-        // Wybierz zwrot zgodny z kierunkiem wiatru
         if (u * tangX + v * tangY < 0) {
           tangX = -tangX;
           tangY = -tangY;
@@ -224,45 +228,48 @@ export class AtmosphereEngineModule {
         const currentSpeed = Math.hypot(u, v);
 
         if (uphillDot > 0) {
-          // Wiatr uderza w ścianę: im wyższy grzbiet, tym silniejsza blokada i skręt wzdłuż poziomicy
           const maxNeighborH = Math.max(...neigh.map((idx: number) => cells.h[idx]));
           const barrierSeverity = Math.min(Math.max((maxNeighborH - 30) / 45, 0), 1.0);
-
-          // Ułamek energii przekierowany wzdłuż zbocza (Ridge Deflection)
           const deflectFactor = barrierSeverity * Math.min(uphillDot / Math.max(currentSpeed, 0.1), 1.0);
 
-          // Składowa prostopadła do ściany jest tłumiona, składowa wzdłużna jest wzmacniana
-          u = u * (1.0 - deflectFactor * 0.85) + tangX * currentSpeed * deflectFactor;
-          v = v * (1.0 - deflectFactor * 0.85) + tangY * currentSpeed * deflectFactor;
+          u = u * (1.0 - deflectFactor * 0.8) + tangX * currentSpeed * deflectFactor;
+          v = v * (1.0 - deflectFactor * 0.8) + tangY * currentSpeed * deflectFactor;
         }
 
-        // Efekt Venturiego w przełęczach / obniżeniach terenu między szczytami
+        // Efekt Venturiego w obniżeniach terenu między szczytami
         if (h_i >= 30 && h_i < 65) {
           let higherNeighCount = 0;
           for (let k = 0; k < neigh.length; k++) {
             if (cells.h[neigh[k]] > h_i + 15) higherNeighCount++;
           }
           if (higherNeighCount >= 2) {
-            // Przełęcz górska: przyspieszenie przepływu
-            u *= 1.35;
-            v *= 1.35;
+            u *= 1.25;
+            v *= 1.25;
           }
         }
       }
 
-      // Wyciszenie wiatru na stromych, litych szczytach (h > 75)
-      if (h_i > 75) {
-        u *= 0.75;
-        v *= 0.75;
+      // Tarcie na dużych wysokościach n.p.m.
+      if (h_i > 60) {
+        const altDamp = Math.max(0.4, 1.0 - (h_i - 60) / 120);
+        u *= altDamp;
+        v *= altDamp;
+      }
+
+      // Capping prędkości do fizycznych granic (maks. 32 m/s ~ 115 km/h)
+      const spd = Math.hypot(u, v);
+      if (spd > 32.0) {
+        u = (u / spd) * 32.0;
+        v = (v / spd) * 32.0;
       }
 
       windU[i] = u;
       windV[i] = v;
     }
 
-    // 5. Delikatne wygładzenie zachowujące opływ orograficzny
-    laplacianSmooth(windU, cells.c, 0.06, 1);
-    laplacianSmooth(windV, cells.c, 0.06, 1);
+    // 5. Delikatne wygładzenie pól wektorowych
+    laplacianSmooth(windU, cells.c, 0.08, 1);
+    laplacianSmooth(windV, cells.c, 0.08, 1);
 
     for (let i = 0; i < n; i++) {
       windSpeed[i] = Math.hypot(windU[i], windV[i]);

@@ -23,8 +23,8 @@ describe("AeroHydroEditor", () => {
         ekmanAngle: 35,
         westernIntensification: 2.4
       },
-      moisture: {
-        orographicCondensationRate: 0.75,
+      moistureAdvection: {
+        orographicBlockRate: 0.75,
         foehnHeatingRate: 0.6
       }
     };
@@ -79,7 +79,7 @@ describe("AeroHydroEditor", () => {
     expect(options.oceanCurrents.windStressFactor).toBe(0.04);
     expect(options.oceanCurrents.ekmanAngle).toBe(40);
     expect(options.oceanCurrents.westernIntensification).toBe(2.5);
-    expect(options.moisture.orographicCondensationRate).toBe(0.8);
-    expect(options.moisture.foehnHeatingRate).toBe(0.7);
+    expect(options.moistureAdvection.orographicBlockRate).toBe(0.8);
+    expect(options.moistureAdvection.foehnHeatingRate).toBe(0.7);
   });
 });

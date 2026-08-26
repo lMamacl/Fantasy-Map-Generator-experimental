@@ -182,22 +182,22 @@ function createDialogHtml(): string {
 function updateInputValues(): void {
   const options = (globalThis as any).options;
   const ocean = options?.oceanCurrents || {};
-  const moisture = options?.moisture || {};
+  const moisture = options?.moistureAdvection || {};
 
   const windStressEl = document.getElementById("oceanWindStressInput") as HTMLInputElement;
   if (windStressEl) windStressEl.value = String(ocean.windStressFactor ?? 0.03);
 
   const ekmanEl = document.getElementById("ekmanAngleInput") as HTMLInputElement;
-  if (ekmanEl) ekmanEl.value = String(ocean.ekmanAngle ?? 30);
+  if (ekmanEl) ekmanEl.value = String(ocean.ekmanAngle ?? 20);
 
   const westEl = document.getElementById("westernIntensificationInput") as HTMLInputElement;
   if (westEl) westEl.value = String(ocean.westernIntensification ?? 2.2);
 
   const oroEl = document.getElementById("orographicCondensationInput") as HTMLInputElement;
-  if (oroEl) oroEl.value = String(moisture.orographicCondensationRate ?? 0.6);
+  if (oroEl) oroEl.value = String(moisture.orographicBlockRate ?? 0.8);
 
   const foehnEl = document.getElementById("foehnHeatingInput") as HTMLInputElement;
-  if (foehnEl) foehnEl.value = String(moisture.foehnHeatingRate ?? 0.5);
+  if (foehnEl) foehnEl.value = String(moisture.foehnHeatingRate ?? 0.35);
 
   renderBaricCentersList();
 }
@@ -435,7 +435,7 @@ function applyChanges(): void {
     (globalThis as any).options = options;
   }
   if (!options.oceanCurrents) options.oceanCurrents = {};
-  if (!options.moisture) options.moisture = {};
+  if (!options.moistureAdvection) options.moistureAdvection = {};
 
   const windStressEl = document.getElementById("oceanWindStressInput") as HTMLInputElement;
   if (windStressEl) options.oceanCurrents.windStressFactor = Number(windStressEl.value);
@@ -447,10 +447,10 @@ function applyChanges(): void {
   if (westEl) options.oceanCurrents.westernIntensification = Number(westEl.value);
 
   const oroEl = document.getElementById("orographicCondensationInput") as HTMLInputElement;
-  if (oroEl) options.moisture.orographicCondensationRate = Number(oroEl.value);
+  if (oroEl) options.moistureAdvection.orographicBlockRate = Number(oroEl.value);
 
   const foehnEl = document.getElementById("foehnHeatingInput") as HTMLInputElement;
-  if (foehnEl) options.moisture.foehnHeatingRate = Number(foehnEl.value);
+  if (foehnEl) options.moistureAdvection.foehnHeatingRate = Number(foehnEl.value);
 }
 
 export const AeroHydroEditor = {

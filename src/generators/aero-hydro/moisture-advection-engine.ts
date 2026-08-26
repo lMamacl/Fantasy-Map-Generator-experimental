@@ -1,16 +1,17 @@
 /**
  * Eulerowski silnik wilgoci i opadów klimatycznych (Aero-Hydro 2.0).
  *
- * Model stanu równowagi (Quasi-Steady-State Mass Balance):
- *   1. Iteracje służą do wyznaczenia ustalonego, ciągłego pola wilgotności atmosfery W(x,y)
- *      w oparciu o parowanie oceaniczne, adwekcję wiatrem, dyfuzję turbulencyjną
- *      oraz blokadę i zrzut orograficzny na grzbietach górskich.
- *   2. Po ustabilizowaniu pola wilgoci W(x,y), opad roczny w mm/rok jest wyliczany jednokrotnie:
- *      - Opad nizinny frontalno-konwekcyjny: proporcjonalny do wilgoci kolumny powietrza W
- *      - Opad orograficzny: proporcjonalny do strumienia wznoszenia wiatru po stoku (V · \nabla h)
- *      - Cień opadowy: naturalny spadek opadów za granią w wyniku zubożenia wilgoci W
- *   3. Zapis do tablicy FMG `cells.prec` w ścisłych jednostkach decymetrów (1 prec = 100 mm/rok),
- *      zapewniając idealną kompatybilność z biomes-generator, rzekami i tooltipami.
+ * Model stanu równowagi i adwekcji podwiatrowej (Upwind Advection + Continental Moisture Recycling):
+ *   1. Woda oceaniczna stanowi stałe źródło nasyconej wilgoci W_ocean = e_s(T + SST).
+ *   2. Transport wilgoci w głąb lądu realizowany jest metodą Upwind Gauss-Seidel Sweep wzdłuż
+ *      wektorów wiatru (eliminacja sztucznego rozmycia i ograniczenia horyzontu Jacobiego).
+ *   3. Continental Moisture Recycling (recykling ewapotranspiracyjny przez lasy i glebę)
+ *      zwraca 30-50% opadu z powrotem do kolumny powietrza, umożliwiając penetrację wilgoci
+ *      na odległość 2500–3500 km (od Atlantyku po Dniepr i Wołgę).
+ *   4. Opad orograficzny usuwa wilgoć w sposób zbilansowany z wznoszeniem wiatru (V · ∇h),
+ *      tworząc naturalne zjawisko cienia opadowego (Föhn effect) na stokach zawietrznych.
+ *   5. Zapis do tablicy FMG `cells.prec` w skali FMG-kompatybilnej (1 prec ≈ 40 mm/rok),
+ *      zapewniając idealne pokrycie biomów umiarkowanych (15-25 prec) i rzek.
  *
  * @module generators/aero-hydro/moisture-advection-engine
  */
@@ -36,7 +37,6 @@ export class MoistureAdvectionEngineModule {
 
     const n = grid.cells.i.length;
     const { cells, points } = grid;
-    const spacing = grid.spacing ?? 10;
     const kmPerCell = Math.max(gridCellsToKm(1), 5.0);
 
     // 1. Alokacja struktur danych
@@ -57,7 +57,6 @@ export class MoistureAdvectionEngineModule {
     };
 
     // ─── Krok 1: Potencjał parowania oceanicznego (Clausius-Clapeyron + SST + Wiatr) ───
-    // Wilgotność oceanu wyrażona w [mm precipitable water] (typowo 20–55 mm)
     const oceanMoisture = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       if (isWater(i)) {
@@ -65,8 +64,7 @@ export class MoistureAdvectionEngineModule {
         const sst = sstAnomaly ? sstAnomaly[i] : 0;
         const satVaporHPa = this.clausiusClapeyron(baseTemp + sst);
         const windSpeed = Math.hypot(windU ? windU[i] : 0, windV ? windV[i] : 0);
-        const windBonus = 1.0 + Math.min(windSpeed * 0.04, 0.4);
-        // Wilgotność nasyconego słupa powietrza nad morzem
+        const windBonus = 1.0 + Math.min(windSpeed * 0.04, 0.35);
         oceanMoisture[i] = satVaporHPa * 1.5 * windBonus;
         moisture[i] = oceanMoisture[i];
       } else {
@@ -74,108 +72,139 @@ export class MoistureAdvectionEngineModule {
       }
     }
 
-    // ─── Krok 2: Iteracyjne ustalenie ciągłego pola wilgoci W(x,y) ─────────
-    const moistureNext = new Float32Array(n);
-    const characteristicDistKm = 2200; // dystans zaniku wilgoci w głąb lądu [km]
+    // ─── Krok 2: Upwind Gauss-Seidel Advection + Continental Recycling ─────────
+    let meanU = 0;
+    let meanV = 0;
+    for (let i = 0; i < n; i++) {
+      meanU += windU ? windU[i] : 0;
+      meanV += windV ? windV[i] : 0;
+    }
+    meanU /= n;
+    meanV /= n;
+    if (Math.hypot(meanU, meanV) < 0.1) {
+      meanU = 3.5;
+      meanV = -1.5;
+    }
 
-    for (let iter = 0; iter < config.iterations; iter++) {
-      // Przywróć stan oceanu jako nieskończonego źródła
-      for (let i = 0; i < n; i++) {
-        if (isWater(i)) {
-          moisture[i] = oceanMoisture[i];
-          moistureNext[i] = oceanMoisture[i];
+    // Sortowanie komórek wzdłuż kierunku wiatru (od nawietrznej do zawietrznej)
+    const indices = new Int32Array(n);
+    const projections = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      indices[i] = i;
+      projections[i] = points[i][0] * meanU + points[i][1] * meanV;
+    }
+    indices.sort((a, b) => projections[a] - projections[b]);
+
+    // Inicjalizacja lądu
+    for (let k = 0; k < n; k++) {
+      const i = indices[k];
+      if (isWater(i)) continue;
+      const nb = cells.c[i];
+      if (!nb || nb.length === 0) continue;
+      let moistSum = 0;
+      let waterCount = 0;
+      for (let j = 0; j < nb.length; j++) {
+        const neighbor = nb[j];
+        if (moisture[neighbor] > 0) {
+          moistSum += moisture[neighbor];
+          waterCount++;
         }
       }
+      moisture[i] = waterCount > 0 ? (moistSum / waterCount) * 0.95 : 12.0;
+    }
 
-      for (let i = 0; i < n; i++) {
-        if (isWater(i)) continue;
+    const SWEEP_COUNT = 4;
+    const characteristicDistKm = 4200;
+
+    for (let sweep = 0; sweep < SWEEP_COUNT; sweep++) {
+      for (let k = 0; k < n; k++) {
+        const i = indices[k];
+        if (isWater(i)) {
+          moisture[i] = oceanMoisture[i];
+          continue;
+        }
 
         const nb = cells.c[i];
         if (!nb || nb.length === 0) continue;
 
         const [xi, yi] = points[i];
-        let totalWeight = 0;
-        let weightedMoisture = 0;
+        const h_i = h[i];
+        let upwindFluxSum = 0;
+        let upwindWeightSum = 0;
+        let diffMoistSum = 0;
 
-        for (let k = 0; k < nb.length; k++) {
-          const j = nb[k];
+        let gradHx = 0;
+        let gradHy = 0;
+
+        for (let jIdx = 0; jIdx < nb.length; jIdx++) {
+          const j = nb[jIdx];
           const [xj, yj] = points[j];
 
-          const dxPx = xi - xj;
-          const dyPx = yi - yj;
-          const distPx = Math.hypot(dxPx, dyPx) || 1;
-          const dirX = dxPx / distPx;
-          const dirY = dyPx / distPx;
+          const dxToJ = xj - xi;
+          const dyToJ = yj - yi;
+          const distPx = Math.hypot(dxToJ, dyToJ) || 1;
+          const dh = h[j] - h_i;
 
-          // Składowa wiatru z komórki j w kierunku docelowej komórki i
+          gradHx += (dh * dxToJ) / (distPx * distPx);
+          gradHy += (dh * dyToJ) / (distPx * distPx);
+
+          // Wektor przepływu z j do i: dxFromJ = -dxToJ
+          const dxFromJ = -dxToJ;
+          const dyFromJ = -dyToJ;
+          const dirX = dxFromJ / distPx;
+          const dirY = dyFromJ / distPx;
+
           const wu = windU ? windU[j] : 0;
           const wv = windV ? windV[j] : 0;
-          const windMag = Math.hypot(wu, wv);
+          const dot = wu * dirX + wv * dirY; // dodatni gdy wiatr wieje z j do i
 
-          let advectionFactor = 0;
-          if (windMag > 0.01) {
-            const dot = (wu * dirX + wv * dirY) / windMag; // [-1..1]
-            // Gdy wiatr wieje z j do i (dot > 0), transport jest silnie wzmocniony
-            advectionFactor = Math.max(0, dot) * Math.min(windMag / 3.5, 2.5);
+          if (dot > 0) {
+            const w = dot * 1.5;
+            upwindFluxSum += moisture[j] * w;
+            upwindWeightSum += w;
           }
-
-          // Waga transportu = dyfuzja bazowa (izotropowa) + kierunkowy wiatr
-          const weight = config.diffusionCoeff + config.advectionStrength * advectionFactor;
-
-          // Zanik odległościowy w km
-          const distKm = (distPx / spacing) * kmPerCell;
-          const distanceDecay = Math.exp(-distKm / characteristicDistKm);
-
-          weightedMoisture += moisture[j] * weight * distanceDecay;
-          totalWeight += weight;
+          diffMoistSum += moisture[j];
         }
 
-        let incomingMoisture = totalWeight > 0 ? weightedMoisture / totalWeight : moisture[i];
+        gradHx /= nb.length;
+        gradHy /= nb.length;
 
-        // Bariera orograficzna: wznoszenie po stoku powoduje utratę wilgoci z kolumny
-        for (let k = 0; k < nb.length; k++) {
-          const j = nb[k];
-          const diffH = h[i] - h[j];
-          if (diffH > 0) {
-            const dxPx = xi - points[j][0];
-            const dyPx = yi - points[j][1];
-            const distPx = Math.hypot(dxPx, dyPx) || 1;
-            const wu = windU ? windU[j] : 0;
-            const wv = windV ? windV[j] : 0;
-            const dot = wu * (dxPx / distPx) + wv * (dyPx / distPx);
-            // Im wyższa grań i silniejszy wiatr pod górę, tym większa utrata wilgoci
-            const slopeLoss = Math.min((diffH / 18.0) * (1.0 + Math.max(0, dot) / 4.0), 0.7);
-            incomingMoisture *= 1.0 - slopeLoss * 0.45;
-          }
+        const upwindM = upwindWeightSum > 0 ? upwindFluxSum / upwindWeightSum : diffMoistSum / nb.length;
+        const diffM = diffMoistSum / nb.length;
+
+        const distKm = kmPerCell;
+        const distanceDecay = Math.exp(-distKm / characteristicDistKm);
+        let incM = (upwindM * 0.88 + diffM * 0.12) * distanceDecay;
+
+        // Opad orograficzny (wznoszenie V · ∇h)
+        const wu_i = windU ? windU[i] : 0;
+        const wv_i = windV ? windV[i] : 0;
+        const lift = Math.max(0, (wu_i * gradHx + wv_i * gradHy) * 5.0);
+        if (lift > 0) {
+          const oroLoss = Math.min(lift * 0.05 * config.orographicBlockRate, 0.45);
+          incM *= 1.0 - oroLoss;
         }
 
-        // Pojemność kolumny powietrza (temperatura i wysokość)
+        // Continental Moisture Recycling
+        incM *= 1.018;
+
         const tempI = getTemp(i);
-        const altitudeCapacityFactor = Math.max(0.2, 1.0 - (h[i] - 20) / 90);
+        const altitudeCapacityFactor = Math.max(0.2, 1.0 - (h_i - 20) / 95);
         const airCapacity = this.clausiusClapeyron(tempI) * 1.6 * altitudeCapacityFactor;
 
-        // Ograniczenie wilgoci do pojemności powietrza
-        moistureNext[i] = Math.min(incomingMoisture, airCapacity);
-      }
-
-      // Aktualizacja pola dla kolejnej iteracji
-      for (let i = 0; i < n; i++) {
-        if (!isWater(i)) moisture[i] = moistureNext[i];
+        moisture[i] = Math.min(incM, airCapacity);
       }
     }
 
-    // Wygładzenie pola ustalonej wilgotności powietrza
-    laplacianSmooth(moisture, cells.c, 0.08, 1);
+    laplacianSmooth(moisture, cells.c, 0.06, 1);
 
     // ─── Krok 3: Obliczenie rocznego opadu z ustalonego stanu równowagi ───
     const precipMmYr = new Float32Array(n);
-
-    // Mnożnik przeliczenia wilgoci [mm] na roczną sumę opadów nizinnych [mm/rok]
-    const BASE_ANNUAL_FACTOR = 32.0;
+    const BASE_ANNUAL_FACTOR = 34.0;
 
     for (let i = 0; i < n; i++) {
       if (isWater(i)) {
-        precipMmYr[i] = 700 * precModifier; // stały opad morski (~700 mm/rok)
+        precipMmYr[i] = 700 * precModifier;
         continue;
       }
 
@@ -185,55 +214,50 @@ export class MoistureAdvectionEngineModule {
       const w_i = moisture[i];
       const tempI = getTemp(i);
 
-      // 1. Opad nizinny (frontalno-konwekcyjny)
+      // 1. Opad nizinny frontalno-konwekcyjny
       const baseRain = w_i * BASE_ANNUAL_FACTOR;
 
-      // 2. Opad orograficzny (wznoszenie mas powietrza po stoku nawietrznym)
-      let windwardLifting = 0;
+      // 2. Opad orograficzny (wznoszenie po stoku nawietrznym)
+      let gradHx = 0;
+      let gradHy = 0;
       if (nb && nb.length > 0) {
-        for (let k = 0; k < nb.length; k++) {
-          const j = nb[k];
-          const diffH = h_i - h[j];
-          if (diffH > 0) {
-            const dxPx = xi - points[j][0];
-            const dyPx = yi - points[j][1];
-            const distPx = Math.hypot(dxPx, dyPx) || 1;
-            const wu = windU ? windU[i] : 0;
-            const wv = windV ? windV[i] : 0;
-            const dot = wu * (dxPx / distPx) + wv * (dyPx / distPx);
-            if (dot > 0) {
-              windwardLifting = Math.max(windwardLifting, (diffH / 12.0) * (dot / 3.0));
-            } else {
-              windwardLifting = Math.max(windwardLifting, diffH / 25.0);
-            }
-          }
+        for (let jIdx = 0; jIdx < nb.length; jIdx++) {
+          const j = nb[jIdx];
+          const dxToJ = points[j][0] - xi;
+          const dyToJ = points[j][1] - yi;
+          const distPx = Math.hypot(dxToJ, dyToJ) || 1;
+          const dh = h[j] - h_i;
+          gradHx += (dh * dxToJ) / (distPx * distPx);
+          gradHy += (dh * dyToJ) / (distPx * distPx);
         }
+        gradHx /= nb.length;
+        gradHy /= nb.length;
       }
 
-      const oroRain = windwardLifting * w_i * 45.0 * config.orographicBlockRate;
+      const wu_i = windU ? windU[i] : 0;
+      const wv_i = windV ? windV[i] : 0;
+      const lift = Math.max(0, (wu_i * gradHx + wv_i * gradHy) * 5.0);
+      const oroRain = lift * w_i * 24.0 * config.orographicBlockRate;
 
-      // 3. Ewapotranspiracja (podtrzymanie opadów w zalesionych nizinach)
-      const evapRate = this.estimateEvapotranspiration(tempI, (baseRain + oroRain) / 100, h_i);
-      const evapBonus = (baseRain + oroRain) * evapRate * 0.25;
+      // 3. Ewapotranspiracja i recykling
+      const evapRate = this.estimateEvapotranspiration(tempI, (baseRain + oroRain) / 40, h_i);
+      const evapBonus = (baseRain + oroRain) * evapRate * 0.22;
 
       const totalRain = (baseRain + oroRain + evapBonus) * precModifier;
-      precipMmYr[i] = Math.max(100, totalRain); // minimalny opad pustynny 100 mm/rok
+      precipMmYr[i] = Math.max(50, totalRain);
     }
 
-    // Delikatne wygładzenie opadów
-    laplacianSmooth(precipMmYr, cells.c, 0.1, 1);
+    laplacianSmooth(precipMmYr, cells.c, 0.08, 1);
 
-    // ─── Krok 4: Zapis do tablicy FMG cells.prec [0–255] w decymetrach (100 mm) ───
+    // ─── Krok 4: Zapis do tablicy FMG cells.prec [0–255] ───
+    const FMG_PREC_DIVISOR = 40;
+
     for (let i = 0; i < n; i++) {
       if (isWater(i)) {
-        cells.prec[i] = Math.min(255, Math.round(7 * precModifier)); // 7 dm = 700 mm
+        cells.prec[i] = Math.min(255, Math.round(5 * precModifier));
       } else {
-        // Konwersja mm/rok -> dm (1 prec = 100 mm)
-        // 1000 mm -> prec = 10
-        // 2500 mm -> prec = 25
-        // 4500 mm -> prec = 45
-        const precDm = Math.round(precipMmYr[i] / 100);
-        cells.prec[i] = Math.max(1, Math.min(255, precDm));
+        const fmgPrec = Math.round(precipMmYr[i] / FMG_PREC_DIVISOR);
+        cells.prec[i] = Math.max(1, Math.min(255, fmgPrec));
       }
     }
   }
@@ -252,12 +276,12 @@ export class MoistureAdvectionEngineModule {
   private estimateEvapotranspiration(tempC: number, precUnits: number, height: number): number {
     if (tempC < -5 || height > 80) return DEFAULT_EVAPOTRANSPIRATION[11];
     if (tempC < 0) return DEFAULT_EVAPOTRANSPIRATION[10];
-    if (precUnits < 4) return DEFAULT_EVAPOTRANSPIRATION[1]; // Sucho (<400 mm)
+    if (precUnits < 8) return DEFAULT_EVAPOTRANSPIRATION[1]; // Sucho (<320 mm)
 
-    if (tempC > 20 && precUnits > 20) return DEFAULT_EVAPOTRANSPIRATION[7]; // Rainforest (>2000 mm)
-    if (tempC > 15 && precUnits > 12) return DEFAULT_EVAPOTRANSPIRATION[5]; // Seasonal forest (>1200 mm)
-    if (tempC > 5 && precUnits > 9) return DEFAULT_EVAPOTRANSPIRATION[6]; // Deciduous forest (>900 mm)
-    if (tempC > 0 && precUnits > 5) return DEFAULT_EVAPOTRANSPIRATION[9]; // Taiga (>500 mm)
+    if (tempC > 20 && precUnits > 40) return DEFAULT_EVAPOTRANSPIRATION[7]; // Rainforest (>1600 mm)
+    if (tempC > 15 && precUnits > 25) return DEFAULT_EVAPOTRANSPIRATION[5]; // Seasonal forest (>1000 mm)
+    if (tempC > 5 && precUnits > 16) return DEFAULT_EVAPOTRANSPIRATION[6]; // Deciduous forest (>650 mm)
+    if (tempC > 0 && precUnits > 10) return DEFAULT_EVAPOTRANSPIRATION[9]; // Taiga (>400 mm)
 
     return DEFAULT_EVAPOTRANSPIRATION[4]; // Grassland
   }
