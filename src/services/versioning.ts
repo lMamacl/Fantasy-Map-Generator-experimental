@@ -132,15 +132,18 @@ function showUpdateWindow(storedVersion: string | null): void {
 }
 
 function announceVersion(): void {
+  if (typeof document === "undefined") return;
   if (parseMapVersion(VERSION) !== VERSION) alert("versioning: Invalid format or parsing function");
 
   document.title += ` v${VERSION}`;
   const loadingScreenVersion = document.getElementById("versionText");
   if (loadingScreenVersion) loadingScreenVersion.innerText = `v${VERSION}`;
 
-  const storedVersion = localStorage.getItem("version");
-  if (compareVersions(storedVersion, VERSION, { major: true, minor: true, patch: false }).isOlder) {
-    setTimeout(() => showUpdateWindow(storedVersion), 6000);
+  if (typeof localStorage !== "undefined") {
+    const storedVersion = localStorage.getItem("version");
+    if (compareVersions(storedVersion, VERSION, { major: true, minor: true, patch: false }).isOlder) {
+      setTimeout(() => showUpdateWindow(storedVersion), 6000);
+    }
   }
 }
 
@@ -154,5 +157,7 @@ declare global {
 }
 
 // temp legacy compatibility
-window.VERSION = VERSION;
-window.cleanupData = cleanupData;
+if (typeof window !== "undefined") {
+  window.VERSION = VERSION;
+  window.cleanupData = cleanupData;
+}

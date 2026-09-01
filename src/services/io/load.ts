@@ -179,16 +179,24 @@ async function parseLoadedResult(
     const isDelimited = resultAsString.substring(0, 10).includes("|");
     let content = isDelimited ? resultAsString : decodeURIComponent(atob(resultAsString));
 
-    // fix if svg part has CRLF line endings instead of LF
+    // Handle both CRLF (\r\n) and LF (\n) line endings transparently:
+    // Extract SVG block first to preserve internal bare newlines within the SVG section
+    let svgContent = "";
     const svgMatch = content.match(/<svg[^>]*id="map"[\s\S]*?<\/svg>/);
-    const svgContent = svgMatch![0];
-    const hasCrlfEndings = svgContent.includes("\r\n");
-    if (hasCrlfEndings) {
-      const correctedSvgContent = svgContent.replace(/\r\n/g, "\n");
-      content = content.replace(svgContent, correctedSvgContent);
+    if (svgMatch) {
+      svgContent = svgMatch[0];
+      // Normalize SVG line endings to \n
+      svgContent = svgContent.replace(/\r\n/g, "\n");
+      content = content.replace(svgMatch[0], "___FMG_SVG_SECTION_PLACEHOLDER___");
     }
 
-    const mapData = content.split("\r\n"); // split by CRLF
+    // Determine section delimiter (\r\n if present, else \n)
+    const delimiter = content.includes("\r\n") ? "\r\n" : "\n";
+    let mapData = content.split(delimiter);
+
+    // Restore the intact SVG section into placeholder slot
+    mapData = mapData.map(line => (line === "___FMG_SVG_SECTION_PLACEHOLDER___" ? svgContent : line));
+
     const mapVersion = parseMapVersion(mapData[0].split("|")[0] || mapData[0] || "");
 
     return { mapData, mapVersion };
