@@ -173,7 +173,7 @@ export class OceanEngineModule {
     this.barrierAwareSmooth(sstAnomaly, cells.c, cells.h, 0.3, 2);
 
     // 7. NOWE: SST wpływa na temperaturę brzegowych komórek lądowych
-    this.propagateSstToLand(cells, spacing, kmPerCell);
+    this.propagateSstToLand(cells, points, spacing, kmPerCell);
   }
 
   /**
@@ -214,32 +214,34 @@ export class OceanEngineModule {
   }
 
   /**
-   * Propaguje anomalię SST na komórki lądowe brzegowe.
-   * Efekt Golfsztromu: ciepły prąd morski ociepla pobliski ląd.
+   * Propaguje anomalię SST na komórki lądowe.
+   * Efekt Golfsztromu: ciepły/chłodny prąd morski przenosi anomalię termiczną w głąb lądu
+   * wzdłuż wektorów wiatru na odległość 800–1200 km.
    */
-  private propagateSstToLand(cells: any, spacing: number, kmPerCell: number): void {
+  private propagateSstToLand(cells: any, points: [number, number][], spacing: number, kmPerCell: number): void {
     const n = cells.h.length;
     if (!cells.sstAnomaly) return;
 
-    // Zainicjuj pole wpływu SST na ląd (addytywne do cells.temp)
     if (!cells.sstLandInfluence || cells.sstLandInfluence.length !== n) {
       cells.sstLandInfluence = new Float32Array(n);
     }
     const influence = cells.sstLandInfluence;
     influence.fill(0);
 
-    // Dla każdej komórki lądowej sprawdź sąsiadów morskich
-    for (let i = 0; i < n; i++) {
-      if (cells.h[i] < 20) continue; // pomiń ocean
+    const { windU, windV, c: neighbors, h: heights } = cells;
 
-      const nb = cells.c[i];
+    // Krok 1: Bezpośredni transfer z komórek morskich na przyległe komórki lądowe
+    for (let i = 0; i < n; i++) {
+      if (heights[i] < 20) continue; // pomiń ocean
+
+      const nb = neighbors[i];
       if (!nb || nb.length === 0) continue;
 
       let sstSum = 0;
       let sstCount = 0;
       for (let j = 0; j < nb.length; j++) {
         const neighbor = nb[j];
-        if (cells.h[neighbor] < 20 && cells.sstAnomaly[neighbor] !== 0) {
+        if (heights[neighbor] < 20 && cells.sstAnomaly[neighbor] !== 0) {
           sstSum += cells.sstAnomaly[neighbor];
           sstCount++;
         }
@@ -247,42 +249,62 @@ export class OceanEngineModule {
 
       if (sstCount > 0) {
         const avgSst = sstSum / sstCount;
-        // Bezpośredni sąsiad morski → pełny wpływ (distance ≈ 1 cell)
-        const distKm = (spacing / 1) * kmPerCell;
-        const decay = Math.exp(-distKm / SST_LAND_DECAY_KM);
-        influence[i] = Math.max(-SST_LAND_MAX_INFLUENCE, Math.min(SST_LAND_MAX_INFLUENCE, avgSst * decay * 0.6));
+        influence[i] = Math.max(-SST_LAND_MAX_INFLUENCE, Math.min(SST_LAND_MAX_INFLUENCE, avgSst * 0.85));
       }
     }
 
-    // Rozprzestrzenienie wpływu SST na 2-3 komórki w głąb lądu (2 iteracje dyfuzji)
-    const temp = new Float32Array(n);
-    for (let pass = 0; pass < 2; pass++) {
+    // Krok 2: Wielokrokowa adwekcja termiczna w głąb lądu pod wpływem wiatru (4 przejścia adwekcyjno-dyfuzyjne)
+    const tempInf = new Float32Array(n);
+    for (let pass = 0; pass < 4; pass++) {
       for (let i = 0; i < n; i++) {
-        if (cells.h[i] < 20) {
-          temp[i] = 0;
+        if (heights[i] < 20) {
+          tempInf[i] = 0;
           continue;
         }
-        const nb = cells.c[i];
+        const nb = neighbors[i];
         if (!nb || nb.length === 0) {
-          temp[i] = influence[i];
+          tempInf[i] = influence[i];
           continue;
         }
 
-        let sum = 0;
-        let landCount = 0;
+        const [xi, yi] = points[i];
+        const wu = windU ? windU[i] : 0;
+        const wv = windV ? windV[i] : 0;
+        const wSpeed = Math.hypot(wu, wv) || 1.0;
+
+        let fluxSum = 0;
+        let weightSum = 0;
+
         for (let j = 0; j < nb.length; j++) {
-          if (cells.h[nb[j]] >= 20) {
-            sum += influence[nb[j]];
-            landCount++;
+          const neighbor = nb[j];
+          if (influence[neighbor] !== 0) {
+            const [xj, yj] = points[neighbor];
+            const dx = xi - xj; // wektor OD sąsiada DO komórki i
+            const dy = yi - yj;
+            const dist = Math.hypot(dx, dy) || 1.0;
+            const dirX = dx / dist;
+            const dirY = dy / dist;
+
+            // Zgodność z wektorem wiatru
+            const alignment = (wu * dirX + wv * dirY) / wSpeed; // [-1, 1]
+            const weight = Math.max(0.1, 0.5 + 0.5 * alignment);
+            const distKm = (dist / spacing) * kmPerCell;
+            const decay = Math.exp(-distKm / (SST_LAND_DECAY_KM * 2.5)); // ~375 km e-folding
+
+            fluxSum += influence[neighbor] * decay * weight;
+            weightSum += weight;
           }
         }
-        if (landCount > 0) {
-          temp[i] = influence[i] * 0.7 + (sum / landCount) * 0.3;
+
+        if (weightSum > 0) {
+          const advected = fluxSum / weightSum;
+          // Zachowaj bezpośredni wpływ na wybrzeżu, rozszerz w głąb lądu
+          tempInf[i] = Math.max(-SST_LAND_MAX_INFLUENCE, Math.min(SST_LAND_MAX_INFLUENCE, influence[i] * 0.5 + advected * 0.5));
         } else {
-          temp[i] = influence[i];
+          tempInf[i] = influence[i];
         }
       }
-      influence.set(temp);
+      influence.set(tempInf);
     }
   }
 
