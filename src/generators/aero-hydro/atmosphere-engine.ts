@@ -21,24 +21,25 @@ import { gridCellsToKm, laplacianSmooth } from "@/utils/grid-math";
 // ─── Named Constants ──────────────────────────────────────────────────────────
 
 /** Skala konwersji gradientu ciśnienia → prędkość wiatru geostroficznego [m/s per hPa/cell] */
-const GEOSTROPHIC_SCALE = 14.0;
+const GEOSTROPHIC_SCALE = 16.0;
 /** Skala składowej cross-isobar (przeskok ciśnieniowy prostopadły do izobary) */
-const CROSS_ISOBAR_SCALE = 8.0;
+const CROSS_ISOBAR_SCALE = 6.0;
 /** Perturbacja termiczna lądu — niż kontynentalny [hPa], uśredniony rocznie */
 const LAND_THERMAL_PRESSURE = -2.5;
 /** Perturbacja termiczna oceanu — stabilniejsze ciśnienie [hPa] */
 const OCEAN_THERMAL_PRESSURE = 1.0;
 
 /**
- * Domyślne kierunki wiatrów na Ziemi (kąty FMG: 0°=N, 90°=E, 180°=S, 270°=W):
- * Tier 0 (60-90°N): Polar Easterlies → 45° (NE)
- * Tier 1 (30-60°N): Westerlies → 225° (SW)
- * Tier 2 (0-30°N): Trade Winds NE → 45° (NE)
- * Tier 3 (0-30°S): Trade Winds SE → 315° (NW)
- * Tier 4 (30-60°S): Westerlies → 135° (SE)
- * Tier 5 (60-90°S): Polar Easterlies → 315° (NW)
+ * Domyślne kierunki wiatrów FMG (kąty zwrotu wektora "dokąd wiatr zmierza"):
+ * 0°=N, 45°=NE, 90°=E, 135°=SE, 180°=S, 225°=SW, 270°=W, 315°=NW
+ * Tier 0 (60-90°N): Polar Easterlies → wieją na SW (225°)
+ * Tier 1 (30-60°N): Westerlies       → wieją na E/NE (45°/90°)
+ * Tier 2 (0-30°N):  Trade Winds NE   → wieją na SW (225°)
+ * Tier 3 (0-30°S):  Trade Winds SE   → wieją na NW (315°)
+ * Tier 4 (30-60°S): Westerlies       → wieją na SE (135°)
+ * Tier 5 (60-90°S): Polar Easterlies → wieją na NW (315°)
  */
-const DEFAULT_WIND_ANGLES = [45, 225, 45, 315, 135, 315];
+const DEFAULT_WIND_ANGLES = [225, 45, 225, 315, 135, 315];
 
 /** Siła modyfikacji ciśnienia przez options.winds hint [hPa] */
 const WIND_HINT_STRENGTH = 3.0;
@@ -94,9 +95,6 @@ export class AtmosphereEngineModule {
     const isLand = (i: number) => cells.h[i] >= 20;
 
     // ─── 2. Ciśnienie zredukowane do poziomu morza (MSLP), centra baryczne i wind hints ───
-    // W meteorologii wiatr geostroficzny wynika z gradientu MSLP (Mean Sea Level Pressure).
-    // Surowy spadek barometryczny na wysokości (-70 hPa na szczytach) nie generuje huraganów
-    // o prędkości 3000 m/s na graniach — wiatr opływa góry mechanicznie.
     for (let i = 0; i < n; i++) {
       const [x, y] = points[i];
       const lat = mapCoordinates.latN - (y / graphHeight) * mapCoordinates.latT;
@@ -139,15 +137,18 @@ export class AtmosphereEngineModule {
         }
       }
 
-      // Ciśnienie na poziomie morza (MSLP) — to ono definiuje pole baryczne i izobary synoptyczne
       pressure[i] = pZonal + pThermal + pWindHint + pCenters;
     }
 
     // 3. Wygładzenie Laplacjanem ciśnienia synoptycznego
     laplacianSmooth(pressure, cells.c, 0.08, 2);
 
-    // ─── 4. Wektory wiatru (Planetary Background + Geostrophic Perturbation + Orografia) ───
+    // ─── 4. Wektory wiatru (Planetary Background + Geostrophy + Terrain + Synoptic Vorticity) ───
     const omega = 7.2921e-5; // prędkość kątowa Ziemi [rad/s]
+
+    // Skala falowa dla szumu synoptycznego (fale Rossby'ego / meandry)
+    const waveKx = (2 * Math.PI) / Math.max(graphWidth * 0.6, 100);
+    const waveKy = (2 * Math.PI) / Math.max(graphHeight * 0.5, 100);
 
     for (let i = 0; i < n; i++) {
       const [x, y] = points[i];
@@ -156,16 +157,14 @@ export class AtmosphereEngineModule {
       const h_i = cells.h[i];
       const isL = h_i >= 20;
 
-      // 4a. Planetarny wiatr tła (Prevailing Planetary Wind) wg strefy i options.winds
+      // 4a. Łagodne tło planetarne (Prevailing Drift) jako tendencja wyjściowa
       const lat = mapCoordinates.latN - (y / graphHeight) * mapCoordinates.latT;
       const windTier = this.getWindTier(lat);
       const userAngle = winds[windTier] ?? DEFAULT_WIND_ANGLES[windTier];
       const userRad = (userAngle * Math.PI) / 180;
-      // FMG kąt wiatru: kąt skąd wieje (0=N, 90=E, 180=S, 270=W)
-      // Zwrot wektora prędkości (dokąd wieje): dirX = sin(userRad), dirY = -cos(userRad)
       const dirToX = Math.sin(userRad);
       const dirToY = -Math.cos(userRad);
-      const basePlanetarySpeed = isL ? 3.8 : 6.2;
+      const basePlanetarySpeed = isL ? 1.0 : 1.8;
       const bgU = dirToX * basePlanetarySpeed;
       const bgV = dirToY * basePlanetarySpeed;
 
@@ -199,19 +198,26 @@ export class AtmosphereEngineModule {
       const latSign = lat >= 0 ? 1 : -1;
 
       // Współczynniki oporu podłoża
-      const surfaceSpeedFactor = isL ? 0.7 : 1.2;
-      const crossIsobarFactor = isL ? 0.35 : 0.1;
+      const surfaceSpeedFactor = isL ? 0.75 : 1.25;
+      const crossIsobarFactor = isL ? 0.30 : 0.10;
 
       // Składowa geostroficzna z gradientu ciśnienia synoptycznego
       const geoScale = GEOSTROPHIC_SCALE * coriolisFactor;
-      const u_geo = (-gradY * geoScale * latSign + gradX * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
-      const v_geo = (gradX * geoScale * latSign + gradY * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
+      const u_geo =
+        (gradY * geoScale * latSign - gradX * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
+      const v_geo =
+        (-gradX * geoScale * latSign - gradY * (crossIsobarFactor * CROSS_ISOBAR_SCALE)) * surfaceSpeedFactor;
 
-      // Całkowity wiatr = tło planetarne + perturbacja baryczna
-      let u = bgU + u_geo;
-      let v = bgV + v_geo;
+      // 4c. Synoptyczna wirowość (Divergence-free curl meanders)
+      // Wprowadza naturalną zmienność, fale i organiczny chaos bez równoległych strzałek
+      const u_vort = -Math.sin(x * waveKx + 0.3) * Math.cos(y * waveKy + 0.8) * 1.5;
+      const v_vort = Math.cos(x * waveKx + 0.3) * Math.sin(y * waveKy + 0.8) * 1.5;
 
-      // ─── 4c. Mechaniczna blokada i opływanie grzbietów górskich ───────
+      // Całkowity wiatr bazowy
+      let u = bgU + u_geo + u_vort;
+      let v = bgV + v_geo + v_vort;
+
+      // ─── 4d. Mechaniczna blokada i opływanie grzbietów górskich ───────
       const hGradLen = Math.hypot(gradHx, gradHy);
       if (hGradLen > 0.005) {
         const normHx = gradHx / hGradLen; // normalna W GÓRĘ stoku
@@ -229,29 +235,30 @@ export class AtmosphereEngineModule {
 
         if (uphillDot > 0) {
           const maxNeighborH = Math.max(...neigh.map((idx: number) => cells.h[idx]));
-          const barrierSeverity = Math.min(Math.max((maxNeighborH - 30) / 45, 0), 1.0);
+          const barrierSeverity = Math.min(Math.max((maxNeighborH - 25) / 40, 0), 1.0);
           const deflectFactor = barrierSeverity * Math.min(uphillDot / Math.max(currentSpeed, 0.1), 1.0);
 
-          u = u * (1.0 - deflectFactor * 0.8) + tangX * currentSpeed * deflectFactor;
-          v = v * (1.0 - deflectFactor * 0.8) + tangY * currentSpeed * deflectFactor;
+          // Przekierowanie wektora ze stoku na kierunek styczny do poziomicy
+          u = u * (1.0 - deflectFactor * 0.85) + tangX * currentSpeed * (deflectFactor * 0.85);
+          v = v * (1.0 - deflectFactor * 0.85) + tangY * currentSpeed * (deflectFactor * 0.85);
         }
 
-        // Efekt Venturiego w obniżeniach terenu między szczytami
-        if (h_i >= 30 && h_i < 65) {
+        // Efekt Venturiego w obniżeniach terenu / przełęczach między szczytami
+        if (h_i >= 25 && h_i < 65) {
           let higherNeighCount = 0;
           for (let k = 0; k < neigh.length; k++) {
-            if (cells.h[neigh[k]] > h_i + 15) higherNeighCount++;
+            if (cells.h[neigh[k]] > h_i + 12) higherNeighCount++;
           }
           if (higherNeighCount >= 2) {
-            u *= 1.25;
-            v *= 1.25;
+            u *= 1.35;
+            v *= 1.35;
           }
         }
       }
 
       // Tarcie na dużych wysokościach n.p.m.
-      if (h_i > 60) {
-        const altDamp = Math.max(0.4, 1.0 - (h_i - 60) / 120);
+      if (h_i > 65) {
+        const altDamp = Math.max(0.4, 1.0 - (h_i - 65) / 100);
         u *= altDamp;
         v *= altDamp;
       }
@@ -268,8 +275,8 @@ export class AtmosphereEngineModule {
     }
 
     // 5. Delikatne wygładzenie pól wektorowych
-    laplacianSmooth(windU, cells.c, 0.08, 1);
-    laplacianSmooth(windV, cells.c, 0.08, 1);
+    laplacianSmooth(windU, cells.c, 0.06, 1);
+    laplacianSmooth(windV, cells.c, 0.06, 1);
 
     for (let i = 0; i < n; i++) {
       windSpeed[i] = Math.hypot(windU[i], windV[i]);
@@ -342,32 +349,41 @@ export class AtmosphereEngineModule {
       lonT: 180
     };
 
-    const centers: BaricCenter[] = [
-      {
-        x: graphWidth * 0.22,
-        y: graphHeight * 0.3,
-        type: "high",
-        pressureHPa: 1030,
-        radiusKm: 2100,
-        thermalOrigin: false
-      },
-      {
-        x: graphWidth * 0.75,
-        y: graphHeight * 0.32,
-        type: "low",
-        pressureHPa: 988,
-        radiusKm: 1800,
-        thermalOrigin: false
-      },
-      {
-        x: graphWidth * 0.48,
-        y: graphHeight * 0.8,
-        type: "high",
-        pressureHPa: 1028,
-        radiusKm: 2000,
-        thermalOrigin: false
-      }
-    ];
+    const latN = mapCoordinates.latN ?? 60;
+    const latS = mapCoordinates.latS ?? -60;
+    const latT = Math.max(mapCoordinates.latT ?? 120, 1);
+    const lonW = mapCoordinates.lonW ?? -90;
+    const lonT = Math.max(mapCoordinates.lonT ?? 180, 1);
+
+    const latToY = (lat: number) => ((latN - lat) / latT) * graphHeight;
+    const lonToX = (lon: number) => ((lon - lonW) / lonT) * graphWidth;
+
+    const centers: BaricCenter[] = [];
+
+    // 1. Wyż Podzwrotnikowy (np. Wyż Azorski / Północnoatlantycki ~32-38°N na zachód od lądu)
+    // Gdy mapa jest wycinkiem regionalnym (np. Fate lonW=5.4°E), wyż leży na zachód od krawędzi (w ghost domain x < 0)
+    const azoresLat = 35.0;
+    const azoresLon = lonW < -20 ? -28.0 : lonW - Math.max(lonT * 0.35, 20.0);
+    centers.push({
+      x: lonToX(azoresLon),
+      y: latToY(azoresLat),
+      type: "high",
+      pressureHPa: 1026,
+      radiusKm: 2800,
+      thermalOrigin: false
+    });
+
+    // 2. Niż Subpolarny / Atlantycki (np. Niż Islandzki ~60-64°N na północnym zachodzie)
+    const icelandLat = 62.0;
+    const icelandLon = lonW < -20 ? -20.0 : lonW - Math.max(lonT * 0.3, 18.0);
+    centers.push({
+      x: lonToX(icelandLon),
+      y: latToY(icelandLat),
+      type: "low",
+      pressureHPa: 998,
+      radiusKm: 3000,
+      thermalOrigin: false
+    });
 
     if (grid?.cells?.h && grid?.points) {
       let landX = 0;
@@ -390,8 +406,8 @@ export class AtmosphereEngineModule {
           x: Math.round(avgX),
           y: Math.round(avgY),
           type: isCold ? "high" : "low",
-          pressureHPa: isCold ? 1026 : 998,
-          radiusKm: 1100,
+          pressureHPa: isCold ? 1024 : 1002,
+          radiusKm: 1400,
           thermalOrigin: true
         });
       }
