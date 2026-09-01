@@ -4,6 +4,7 @@ import { closeDialogs } from "@/components/dialog/dialog-helpers";
 import { Layers } from "@/components/layers";
 import { tip } from "@/components/tooltips";
 import { Services } from "@/services";
+import { serializeAeroHydroState } from "@/services/io/aero-hydro-state";
 import { getUsedFonts } from "@/services/fonts";
 import { VERSION } from "@/services/versioning";
 import { downloadFile, ensureEl, getFileName, link, parseError, rn } from "@/utils";
@@ -127,6 +128,8 @@ function prepareMapData(): string {
   const labels = JSON.stringify(pack.addedLabels || []);
   const styleData = JSON.stringify(style);
   const flowFeatures = JSON.stringify(pack.flowFeatures || []);
+  // data[52]: pola fizyczne Aero-Hydro (puste dla starych map bez klimatu)
+  const aeroHydroState = serializeAeroHydroState();
 
   // store custom good icons
   const goodIconsEl = ensureEl("good-icons");
@@ -200,7 +203,8 @@ function prepareMapData(): string {
     styleData,
     relief,
     layers,
-    flowFeatures
+    flowFeatures,
+    aeroHydroState
   ].join("\r\n");
   return mapData;
 }

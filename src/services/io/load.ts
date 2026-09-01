@@ -4,6 +4,7 @@ import { Layers } from "@/components/layers";
 import { clearMainTip, tip } from "@/components/tooltips";
 import { applyDefaultViewboxEvents } from "@/components/viewbox-events";
 import { clearLegend } from "@/renderers/draw-legend";
+import { restoreAeroHydroState } from "@/services/io/aero-hydro-state";
 import { Services } from "@/services";
 import { declareFont } from "@/services/fonts";
 import { cleanupData, compareVersions, isValidVersion, parseMapVersion, VERSION } from "@/services/versioning";
@@ -434,6 +435,16 @@ async function parseLoadedData(data: string[], mapVersion: string | null): Promi
     pack.flowFeatures = data[51] ? JSON.parse(data[51]) : [];
     if (typeof AeroHydro !== "undefined" && AeroHydro) {
       AeroHydro.flowFeatures = pack.flowFeatures || [];
+    }
+
+    // data[52]: Aero-Hydro physical state (optional — older saves do not have it)
+    if (data[52]) {
+      try {
+        const restored = restoreAeroHydroState(JSON.parse(data[52]));
+        if (restored) INFO && console.info("[Aero-Hydro] Physical fields restored from save");
+      } catch (error) {
+        ERROR && console.error("[Aero-Hydro] Failed to restore physical state:", error);
+      }
     }
 
     {

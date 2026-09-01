@@ -6,6 +6,9 @@
  *   2. Ścisła separacja topologiczna 2–3 komórek Voronoi między wstęgami (strefa wykluczenia).
  *   3. Gładki skręt (kąt skrętu < 35° między segmentami, brak ostrych załamań).
  *   4. Dla oceanu: wielonitkowe wstęgi z zatrzymaniem przed brzegiem lądu.
+ *   5. Dla oceanu: progi adaptacyjne względem maksimum pola (prądy mają ~0.05–0.5 m/s,
+ *      więc sztywny próg 0.4 m/s ucinał śledzenie po 1. kroku — zostawało kilkanaście
+ *      wstęg zamiast pełnej cyrkulacji gyralnej).
  *
  * @module renderers/aero-hydro/streamline-renderer
  */
@@ -157,11 +160,21 @@ export class StreamlineRendererModule {
       }
     } else {
       // 2. Prądy morskie (ściśle na oceanie: cells.h[i] < 20, z zatrzymaniem na lądzie)
+      // Progi adaptacyjne: start od 25% maksimum pola, stop poniżej 8% maksimum.
+      let maxSpeed = 0;
+      for (let i = 0; i < n; i++) {
+        if (cells.h[i] >= 20) continue;
+        const spd = Math.hypot(uField[i] || 0, vField[i] || 0);
+        if (spd > maxSpeed) maxSpeed = spd;
+      }
+      const startThreshold = Math.max(maxSpeed * 0.25, 0.05);
+      const stopThreshold = Math.max(maxSpeed * 0.08, 0.01);
+
       const oceanCandidates: { index: number; speed: number }[] = [];
       for (let i = 0; i < n; i++) {
         if (cells.h[i] < 20) {
           const spd = Math.hypot(uField[i] || 0, vField[i] || 0);
-          if (spd > 1.2) {
+          if (spd > startThreshold) {
             oceanCandidates.push({ index: i, speed: spd });
           }
         }
@@ -191,15 +204,19 @@ export class StreamlineRendererModule {
           const v = vField[cellIdx] || 0;
           const speed = Math.hypot(u, v);
 
-          if (isLand || speed < 0.4) break; // Twarde zatrzymanie przed lądem
+          if (isLand || speed < stopThreshold) break; // Twarde zatrzymanie przed lądem
 
           totalSpeed += speed;
           validSteps++;
 
           this.markExclusionZone(cellIdx, neighbors, usedCells, 2);
 
-          let dx = (u / (speed + 0.5)) * 24;
-          let dy = (v / (speed + 0.5)) * 24;
+          // Krok kierunkowy o stałej długości ekranowej (prędkość fizyczna prądów
+          // ~0.05–0.5 m/s nie może bezpośrednio skalować długości segmentu SVG)
+          const relSpeed = maxSpeed > 0 ? speed / maxSpeed : 0;
+          const stepPx = 10 + 14 * relSpeed; // 10–24 px w zależności od siły prądu
+          let dx = (u / speed) * stepPx;
+          let dy = (v / speed) * stepPx;
 
           if (step > 0) {
             const curAngle = Math.atan2(dy, dx);
